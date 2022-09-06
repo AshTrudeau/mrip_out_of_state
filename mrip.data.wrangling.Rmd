@@ -9,6 +9,8 @@ knitr::opts_chunk$set(echo = TRUE)
 pacman::p_load(tidyverse, lubridate, here)
 ```
 
+MRIP raw trip data from here: https://www.st.nmfs.noaa.gov/st1/recreational/MRIP_Survey_Data/CSV/
+
 ```{r}
 
 
