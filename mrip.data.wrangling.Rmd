@@ -1,0 +1,63 @@
+---
+title: "data wrangling"
+output: html_document
+date: "2022-09-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse, lubridate, here)
+```
+
+```{r}
+
+
+
+tbl<-list.files(path=here::here("data", "mrip raw"), pattern="trip*")
+
+setwd(here::here("data","mrip raw"))
+data<-sapply(tbl, read_csv, simplify=F)
+
+
+setwd("C:/Users/ashle/Dropbox/MRIP out of state/mrip_out_of_state")
+
+for(i in 1:length(data)){
+   names(data[[i]])<-tolower(names(data[[i]]))
+ 
+}
+
+
+#all.data<-do.call("rbind", data)
+
+ rbind.all.columns <- function(x, y) {
+  
+     x.diff <- setdiff(colnames(x), colnames(y))
+     y.diff <- setdiff(colnames(y), colnames(x))
+  
+     x[, c(as.character(y.diff))] <- NA
+  
+     y[, c(as.character(x.diff))] <- NA
+  
+     return(rbind(x, y))
+ }
+```
+ 
+ 
+ 
+```{r} 
+ 
+all.data <- Reduce( rbind.all.columns, data)
+
+
+```
+
+
+
+To do: 
+- match residence ZIP code to centroid lat long and US state
+- compare residence lat long to access point lat long, classify as traveling north or south
+- by state and year, summarize number of intercepts of out of state anglers traveling from 1) north and 2) south
+- by state and year, summarize number of intercepts of all anglers traveling from 1) north and 2) south
+- by state and year for summer flounder, black sea bass, and scup, summarize number of intercepts of out of state anglers traveling from north and south. 
+- fit time series models: categorical year effect, linear effect, seasonality (categorical by wave, probably)
+- maybe if I hate myself: collect state regulations to add as covariates. 
