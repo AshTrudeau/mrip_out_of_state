@@ -50,9 +50,101 @@ for(i in 1:length(data)){
  
 all.data <- Reduce( rbind.all.columns, data)
 
+write.csv(all.data, here::here("summary output", "all.trip.data.csv"))
+```
+
+If I don't want to do all of the above from scratch in the future: 
+
+```{r}
+all.data<-read_csv(here::here("summary output","all.trip.data.csv"))
+```
+
+
+```{r}
+names(all.data)
+```
+
+site ID codes are not shared publically, so for now I will get centroid lat longs for county of intercept and county of residence.
+
+county FIPS (and other cool spatial data) https://github.com/btskinner/spatial
+```{r}
+fips.convert<-read_csv(here::here("data","county_centers.csv"))
+
+# clon10 is spatial center of county in 2010 census
+
+fips<-fips.convert%>%
+  select(fips, clat10, clon10)%>%
+  mutate(fips=as.character(fips),
+         # fips string needs to be same length as concatenated fips below in data.select; tripped me up before
+         fips=str_pad(fips, 5, "left", "0"))%>%
+  rename(cnty_fips=fips,
+         latInt=clat10,
+         longInt=clon10)
+
+fips.res<-fips%>%
+  rename(cnty_res_fips=cnty_fips,
+         latRes=latInt,
+         longRes=longInt)
+
 
 ```
 
+
+```{r}
+# I need to make a new column that combines state and county fips
+data.select<-all.data%>%
+  select(area_x, boat_hrs, cnty, cnty_res, dist, gear, hrs_dtd, hrsf, intsite, kod, mode_f, month, prim1_common, prim2_common, psu_id, id_code, st, st_res, strat_id, time, wave, year, zip)%>%
+  mutate(cnty_res_fips=paste0(str_pad(as.character(st_res), 2, "left", "0"), str_pad(as.character(cnty_res), 3, "left", "0")),
+         cnty_fips=paste0(str_pad(as.character(st), 2, "left", "0"), str_pad(as.character(cnty), 3, "left", "0")))%>%
+  left_join(fips.res, by="cnty_res_fips")%>%
+  left_join(fips, by="cnty_fips")%>%
+  # remove the 48000 entries with missing coordinates
+  filter(!is.na(latInt) & !is.na(latRes))%>%
+  mutate(outOfState=ifelse(st==st_res, 0, 1),
+         fromNorth=ifelse(latRes>latInt, 1, 0),
+         fromSouth=ifelse(latRes<latInt, 1, 0))
+
+
+data.outOfState<-filter(data.select, outOfState==1)  
+
+hist(data.outOfState$fromNorth)
+```
+```{r}
+hist(data.outOfState$fromSouth)
+```
+Huh. And what if I restrict it to mid-atlantic?
+
+States: North Carolina, Virginia, Maryland, New Jersey, Delaware, Pennsylvania, New York, Connecticut, Rhode Island, Massachusetts, New Hampshire, and Maine
+```{r}
+midatl.outOfState<-filter(data.outOfState,
+                          st%in%c(37, 51, 24, 34, 10, 42, 36, 9, 44, 25, 33, 23))
+
+# that's cumbersome, just join the state/fips csv
+
+state.fips<-read_csv(here::here("data","state.fips.csv"))
+
+midatl.visitors<-left_join(midatl.outOfState, state.fips[,c("st", 'stusps')], by="st")
+
+state.fips$st_res<-state.fips$st
+state.fips$stusps_res<-state.fips$stusps
+
+midatl.visitors<-left_join(midatl.visitors, state.fips[,c("st_res","stusps_res")], by="st_res")
+
+ggplot(midatl.visitors)+
+  geom_bar(aes(x=stusps, fill=stusps_res ), position="stack")
+```
+oof that's ugly. 
+
+```{r}
+midatl.visitors$fromWhere<-ifelse(midatl.visitors$fromNorth==1, "north", 
+                                  ifelse(midatl.visitors$fromSouth==1,"south","NA"))
+
+midatl.visitors$stusps<-factor(midatl.visitors$stusps, levels=c("NC","VA","MD","DE","NJ","NY","CT","RI","MA","NH","ME"))
+
+ggplot(midatl.visitors)+
+  geom_bar(aes(x=stusps, fill=fromWhere), position="stack")
+```
+Right, so clearly the further north you are, the more likely out of staters are to come from the south. That's obvious. Over time for each state, how has that number changed? 
 
 
 To do: 
