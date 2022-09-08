@@ -144,8 +144,142 @@ midatl.visitors$stusps<-factor(midatl.visitors$stusps, levels=c("NC","VA","MD","
 ggplot(midatl.visitors)+
   geom_bar(aes(x=stusps, fill=fromWhere), position="stack")
 ```
-Right, so clearly the further north you are, the more likely out of staters are to come from the south. That's obvious. Over time for each state, how has that number changed? 
+Right, so clearly the further north you are, the more likely out of staters are to come from the south. That's obvious. Over time for each state, how has that number changed? Then further break it down by target species.  
 
+```{r}
+by.state<-midatl.visitors%>%
+  group_by(stusps, year, fromWhere)%>%
+  summarize(numberInt=n())%>%
+  ungroup()
+
+ggplot(by.state)+
+  geom_line(aes(x=year, y=numberInt, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~., scales="free_y")+
+  theme_classic()
+ggsave(here::here("figures","north.south.by.state.png"), height=12, width=4)
+```
+
+What about coming from the south as a proportion of total effort? easier to interpret visually
+
+```{r}
+by.state.prop<-by.state%>%
+  group_by(stusps, year)%>%
+  mutate(totalInt=sum(numberInt))%>%
+  mutate(prop=numberInt/totalInt)
+
+ggplot(by.state.prop)+
+  geom_line(aes(x=year, y=prop, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~.)+
+  theme_classic()
+ggsave(here::here("figures","north.south.prop.by.state.png"), height=12, width=4)
+
+```
+Yeah! Some possible trends there. It looks like VA is getting more people from the south, as is NJ, NY. In other states, trend of more people coming from the north: CT, MA, NH. People converging on states near higher distributions of popular stocks? Definitely worth separating by target species. For now lets' just do summer flounder, black sea bass, and scup. 
+
+For simplicity, sticking with primary target species for now
+
+```{r}
+by.state.species<-midatl.visitors%>%
+  group_by(stusps, year, prim1_common, fromWhere)%>%
+  summarize(numberInt=n())%>%
+  filter(prim1_common%in%c("SUMMER FLOUNDER","BLACK SEA BASS","SCUP"))%>%
+  ungroup()
+
+```
+Summer flounder first
+
+```{r}
+smf<-filter(by.state.species, prim1_common=="SUMMER FLOUNDER")
+
+ggplot(smf)+
+  geom_line(aes(x=year, y=numberInt, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~., scales="free_y")+
+  theme_classic()
+ggsave(here::here("figures","smf.north.south.by.state.png"), height=12, width=4)
+
+# let's make that a proportion again
+
+smf.prop<-smf%>%
+  group_by(stusps, year)%>%
+  mutate(totalInt=sum(numberInt))%>%
+  mutate(prop=numberInt/totalInt)
+
+ggplot(smf.prop)+
+  geom_line(aes(x=year, y=prop, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~.)+
+  theme_classic()
+ggsave(here::here("figures","smf.north.south.prop.by.state.png"), height=12, width=4)
+
+
+```
+
+Black sea bass
+
+```{r}
+bsb<-filter(by.state.species, prim1_common=="BLACK SEA BASS")
+
+ggplot(bsb)+
+  geom_line(aes(x=year, y=numberInt, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~., scales="free_y")+
+  theme_classic()
+ggsave(here::here("figures","bsb.north.south.by.state.png"), height=12, width=4)
+
+# let's make that a proportion again
+
+bsb.prop<-bsb%>%
+  group_by(stusps, year)%>%
+  mutate(totalInt=sum(numberInt))%>%
+  mutate(prop=numberInt/totalInt)
+
+ggplot(bsb.prop)+
+  geom_line(aes(x=year, y=prop, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~.)+
+  theme_classic()
+ggsave(here::here("figures","bsb.north.south.prop.by.state.png"), height=12, width=4)
+
+
+```
+
+Hm. difficult to make anything out of that, other than many more people coming to fish for BSB (from all over) in NY, CT, RI, MA, when prior to 2010, there was not a lot of targeting of that species
+
+Try scup, probably won't see much
+
+```{r}
+scp<-filter(by.state.species, prim1_common=="SCUP")
+
+ggplot(scp)+
+  geom_line(aes(x=year, y=numberInt, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~., scales="free_y")+
+  theme_classic()
+ggsave(here::here("figures","scp.north.south.by.state.png"), height=12, width=4)
+
+# let's make that a proportion again
+
+scp.prop<-scp%>%
+  group_by(stusps, year)%>%
+  mutate(totalInt=sum(numberInt))%>%
+  mutate(prop=numberInt/totalInt)
+
+ggplot(scp.prop)+
+  geom_line(aes(x=year, y=prop, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~.)+
+  theme_classic()
+ggsave(here::here("figures","scp.north.south.prop.by.state.png"), height=12, width=4)
+
+
+```
+
+oh! that's interesting. really clear pattern of more people coming from north to RI, more people from south going to MA. 
+
+Sudden spike in intercpets primarily targeting scup in NJ (especially from north), NY (from each direction), CT (from each direction) RI (from north), MA (from south)
 
 To do: 
 - match residence ZIP code to centroid lat long and US state
