@@ -6,7 +6,7 @@ date: "2022-09-06"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse, lubridate, here)
+pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize)
 ```
 
 MRIP raw trip data from here: https://www.st.nmfs.noaa.gov/st1/recreational/MRIP_Survey_Data/CSV/
@@ -119,21 +119,191 @@ States: North Carolina, Virginia, Maryland, New Jersey, Delaware, Pennsylvania, 
 midatl.outOfState<-filter(data.outOfState,
                           st%in%c(37, 51, 24, 34, 10, 42, 36, 9, 44, 25, 33, 23))
 
+midatl.all<-filter(data.select, 
+                   st%in%c(37, 51, 24, 34, 10, 42, 36, 9, 44, 25, 33, 23))
 # that's cumbersome, just join the state/fips csv
 
 state.fips<-read_csv(here::here("data","state.fips.csv"))
 
 midatl.visitors<-left_join(midatl.outOfState, state.fips[,c("st", 'stusps')], by="st")
+midatl.all<-left_join(midatl.all, state.fips[,c("st","stusps")], by="st")
 
 state.fips$st_res<-state.fips$st
 state.fips$stusps_res<-state.fips$stusps
 
 midatl.visitors<-left_join(midatl.visitors, state.fips[,c("st_res","stusps_res")], by="st_res")
+midatl.all<-left_join(midatl.all, state.fips[,c("st_res","stusps_res")], by="st_res")
 
 ggplot(midatl.visitors)+
   geom_bar(aes(x=stusps, fill=stusps_res ), position="stack")
+
+ggplot(midatl.all)+
+  geom_bar(aes(x=stusps, fill=stusps_res ), position="stack")
+
 ```
-oof that's ugly. 
+oof that's ugly and hard to read. I want to aggregate states by region. 
+
+```{r}
+regions<-read_csv(here::here("data","us.regions.csv"))
+
+midatl.visitors.reg<-left_join(midatl.visitors, regions, by="stusps_res")
+midatl.all.reg<-left_join(midatl.all, regions, by="stusps_res")
+
+palette<-brewer.pal(5, "Set1")
+
+ggplot(midatl.visitors.reg)+
+  geom_bar(aes(x=stusps, fill=region_res ), position="stack")+
+  scale_fill_manual(values=palette)
+
+ggplot(midatl.all.reg)+
+  geom_bar(aes(x=stusps, fill=region_res ), position="stack")+
+  scale_fill_manual(values=palette)
+
+
+```
+
+And if we filter only by visitors from the Northeast and Southeast, what states are represented?
+
+```{r}
+midatl.visitors.east<-filter(midatl.visitors.reg, region_res%in%c("Northeast","Southeast"))
+midatl.all.east<-filter(midatl.all.reg, region_res%in%c("Northeast","Southeast"))
+
+ggplot(midatl.visitors.east)+
+  geom_bar(aes(x=stusps, fill=stusps_res ), position="stack")
+
+ggplot(midatl.all.east)+
+  geom_bar(aes(x=stusps, fill=stusps_res ), position="stack")
+
+
+```
+That's still difficult to read. look at northeast and southeast separately, but keep NC 
+
+```{r}
+midatl.visitors.northeast<-midatl.visitors.reg%>%
+  filter(region_res=="Northeast" | stusps_res%in%c("NC","VA"))%>%
+  mutate(stusps=factor(stusps, levels=c("NC","VA","MD","DE","NJ","NY","CT","RI","MA","NH","ME")),
+         stusps_res=factor(stusps_res, levels=rev(c("NC","VA","DC","MD","DE","PA","NJ","NY","CT","RI","MA","NH","VT","ME"))))
+
+
+midatl.all.northeast<-midatl.all.reg%>%
+  filter(region_res=="Northeast" | stusps_res%in%c("NC", "VA"))%>%
+  mutate(stusps=factor(stusps, levels=c("NC","VA","MD","DE","NJ","NY","CT","RI","MA","NH","ME")),
+         stusps_res=factor(stusps_res, levels=rev(c("NC","VA","DC","MD","DE","PA","NJ","NY","CT","RI","MA","NH","VT","ME"))))
+
+
+palette<-c(brewer.pal(12, "Paired"),"#000000","#808080")
+
+ggplot(midatl.visitors.northeast)+
+  geom_bar(aes(x=stusps, fill=stusps_res ), position="stack")+
+  scale_fill_manual(values=palette)+
+  theme_classic()
+
+ggplot(midatl.all.northeast)+
+  geom_bar(aes(x=stusps, fill=stusps_res ), position="stack")+
+  scale_fill_manual(values=palette)+
+  theme_classic()
+
+
+```
+NC goes to VA (and probably the SE states not shown here), with small numbers going to more northern states
+DC goes to NC, MD, DE, and MA
+MD goes to NC, VA, DE, NJ, MA
+DE goes to NC, VA, MC, NJ (and in small numbers further north)
+PA goes to NC, VA, MD, DE, NJ, and smaller numbers further north. Interestingly, makes up huge percentage of NJ's out of state anglers. 
+NJ goes everywhere, but I suspect they may stick to in-state fishing.
+NY goes everywhere
+CT goes everywhere, but msotly to RI and MA
+MA goes everywhere, but mostly to CT, RI, MA, NH, ME
+NH goes to MA and ME
+VT goes to CT, RI, MA, MH, ME
+ME goes ti RI, MA, NH, ME
+
+a circular chord diagram would illustrate this really well
+
+these are all out of staters, not residents. i can add residents back in, but I think they would flood out the visitors. (check though)
+```{r}
+table.midatl.nonres<-midatl.visitors.northeast%>%
+  select(stusps, stusps_res)
+
+table.midatl.nonres<-table(table.midatl.nonres$stusps_res, table.midatl.nonres$stusps)
+
+table.midatl.all<-midatl.all.northeast%>%
+  select(stusps, stusps_res)
+
+table.midatl.all<-table(table.midatl.all$stusps, table.midatl.all$stusps_res)
+```
+
+Right. So people mostly go to nearby states, which is obvious. But over time, have they tended to travel further? 
+
+```{r}
+chordDiagram(table.midatl.all)
+```
+```{r}
+chordDiagram(table.midatl.nonres)
+```
+
+I wonder why VA isn't a big fishign destination
+
+Which states attract greatest variety of out of staters? Or out of staters from greatest distance? might be NC
+
+```{r}
+midatl.visitors.ne.sum<-midatl.visitors.northeast%>%
+  group_by(stusps)%>%
+  summarize(nstates=length(unique(stusps_res)))
+
+midatl.visitors.ne.sum
+```
+
+
+
+That's not informative. I could instead estimate travel distance between residential and destination lat long. use great circle distance to stay consistent with Juliano's work. I'll do this once for all intercepts from all states and once limiting to northeast + NC
+
+This is where I left off 9/9. Still need to code conversion to radians and re-estimate travel distance
+
+```{r}
+# oops, need to convert lat long to radians
+deg2rad<-function(deg) {
+  return(deg*pi/180)
+}
+
+gr.circ<-function(lat1, long1, lat2, long2){
+  r<-6371
+  d<-ifelse(lat1==lat2 & long1==long2,0,
+            r*acos(cos(deg2rad(lat1))*cos(deg2rad(lat2))*cos(deg2rad(long2)-deg2rad(long1)) + sin(deg2rad(lat1))*sin(deg2rad(lat2))))
+    return(d)
+  }
+  
+
+
+midatl.visitors.dist<-midatl.visitors.reg%>%
+  mutate(travelDist=gr.circ(latInt, longInt, latRes, longRes))
+
+midatl.all.dist<-midatl.all.reg%>%
+  mutate(travelDist=gr.circ(latInt, longInt, latRes, longRes))
+
+# let's also apply that to the full dataset
+
+data.select.dist<-data.select%>%
+  mutate(travelDist=gr.circ(latInt, longInt, latRes, longRes))
+
+hist(data.select.dist$travelDist)
+
+hist(midatl.visitors.dist$travelDist)
+
+hist(midatl.all.dist$travelDist)
+
+```
+```{r}
+summary(midatl.visitors.dist$travelDist)
+summary(data.select.dist$travelDist)
+summary(midatl.all.dist$travelDist)
+```
+wh yare there so many NaNs?
+
+From quick skim, it looks like it's because the lat longs are identical. There are no NaN values in the df for visitors. Fixed the function
+
+Distances look appropriate
+
 
 ```{r}
 midatl.visitors$fromWhere<-ifelse(midatl.visitors$fromNorth==1, "north", 
@@ -144,14 +314,313 @@ midatl.visitors$stusps<-factor(midatl.visitors$stusps, levels=c("NC","VA","MD","
 ggplot(midatl.visitors)+
   geom_bar(aes(x=stusps, fill=fromWhere), position="stack")
 ```
-Right, so clearly the further north you are, the more likely out of staters are to come from the south. That's obvious. Over time for each state, how has that number changed? 
+Right, so clearly the further north you are, the more likely out of staters are to come from the south. That's obvious. Over time for each state, how has that number changed? Then further break it down by target species.  
 
+```{r}
+by.state<-midatl.visitors%>%
+  group_by(stusps, year, fromWhere)%>%
+  summarize(numberInt=n())%>%
+  ungroup()
+
+ggplot(by.state)+
+  geom_line(aes(x=year, y=numberInt, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~., scales="free_y")+
+  theme_classic()
+ggsave(here::here("figures","north.south.by.state.png"), height=12, width=4)
+```
+
+What about coming from the south as a proportion of total effort? easier to interpret visually
+
+```{r}
+by.state.prop<-by.state%>%
+  group_by(stusps, year)%>%
+  mutate(totalInt=sum(numberInt))%>%
+  mutate(prop=numberInt/totalInt)
+
+ggplot(by.state.prop)+
+  geom_line(aes(x=year, y=prop, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~.)+
+  theme_classic()
+ggsave(here::here("figures","north.south.prop.by.state.png"), height=12, width=4)
+
+```
+Yeah! Some possible trends there. It looks like VA is getting more people from the south, as is NJ, NY. In other states, trend of more people coming from the north: CT, MA, NH. People converging on states near higher distributions of popular stocks? Definitely worth separating by target species. For now lets' just do summer flounder, black sea bass, and scup. 
+
+For simplicity, sticking with primary target species for now
+
+```{r}
+by.state.species<-midatl.visitors%>%
+  group_by(stusps, year, prim1_common, fromWhere)%>%
+  summarize(numberInt=n())%>%
+  filter(prim1_common%in%c("SUMMER FLOUNDER","BLACK SEA BASS","SCUP"))%>%
+  ungroup()
+
+```
+Summer flounder first
+
+```{r}
+smf<-filter(by.state.species, prim1_common=="SUMMER FLOUNDER")
+
+ggplot(smf)+
+  geom_line(aes(x=year, y=numberInt, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~., scales="free_y")+
+  theme_classic()
+ggsave(here::here("figures","smf.north.south.by.state.png"), height=12, width=4)
+
+# let's make that a proportion again
+
+smf.prop<-smf%>%
+  group_by(stusps, year)%>%
+  mutate(totalInt=sum(numberInt))%>%
+  mutate(prop=numberInt/totalInt)
+
+ggplot(smf.prop)+
+  geom_line(aes(x=year, y=prop, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~.)+
+  theme_classic()
+ggsave(here::here("figures","smf.north.south.prop.by.state.png"), height=12, width=4)
+
+
+```
+
+Black sea bass
+
+```{r}
+bsb<-filter(by.state.species, prim1_common=="BLACK SEA BASS")
+
+ggplot(bsb)+
+  geom_line(aes(x=year, y=numberInt, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~., scales="free_y")+
+  theme_classic()
+ggsave(here::here("figures","bsb.north.south.by.state.png"), height=12, width=4)
+
+# let's make that a proportion again
+
+bsb.prop<-bsb%>%
+  group_by(stusps, year)%>%
+  mutate(totalInt=sum(numberInt))%>%
+  mutate(prop=numberInt/totalInt)
+
+ggplot(bsb.prop)+
+  geom_line(aes(x=year, y=prop, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~.)+
+  theme_classic()
+ggsave(here::here("figures","bsb.north.south.prop.by.state.png"), height=12, width=4)
+
+
+```
+
+Hm. difficult to make anything out of that, other than many more people coming to fish for BSB (from all over) in NY, CT, RI, MA, when prior to 2010, there was not a lot of targeting of that species
+
+Try scup, probably won't see much
+
+```{r}
+scp<-filter(by.state.species, prim1_common=="SCUP")
+
+ggplot(scp)+
+  geom_line(aes(x=year, y=numberInt, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~., scales="free_y")+
+  theme_classic()
+ggsave(here::here("figures","scp.north.south.by.state.png"), height=12, width=4)
+
+# let's make that a proportion again
+
+scp.prop<-scp%>%
+  group_by(stusps, year)%>%
+  mutate(totalInt=sum(numberInt))%>%
+  mutate(prop=numberInt/totalInt)
+
+ggplot(scp.prop)+
+  geom_line(aes(x=year, y=prop, color=fromWhere))+
+  scale_color_manual(values=c("blue","red"))+
+  facet_grid(stusps~.)+
+  theme_classic()
+ggsave(here::here("figures","scp.north.south.prop.by.state.png"), height=12, width=4)
+
+
+```
+
+oh! that's interesting. really clear pattern of more people coming from north to RI, more people from south going to MA. 
+
+<<<<<<< HEAD
+number by region by year
+
+```{r}
+region.time<-midatl.visitors.dist%>%
+  group_by(year, region_res)%>%
+  summarize(n=n())
+
+palette<-brewer.pal(length(unique(region.time$region_res)), "Set1")
+
+ggplot(region.time, aes(x=year, y=n))+
+  geom_line(aes(color=region_res))+
+  scale_color_manual(values=palette)+
+  theme_classic()
+```
+Right, Northeast and Southeast make up the vast majority of outof state visitors to the Mid-atlantic. For comparing travel time, I"ll look just at Northeast and Southeast to avoid visitors from HI, AK, having a huge effect on average travel distance. 
+
+```{r}
+midatl.all.dist.east<-midatl.all.dist%>%
+  filter(region_res%in%c("Northeast","Southeast"))%>%
+  mutate(outOfState=as.factor(outOfState))
+
+palette<-brewer.pal(2, "Set1")
+
+# facet by state
+ggplot(midatl.all.dist.east)+
+  geom_point(aes(x=year, y=travelDist, color=outOfState))+
+  scale_color_manual(values=palette)+
+  facet_grid(stusps~.)+
+  theme_classic()
+ggsave(here::here("figures","travel.distance.trend.png"), height=16, width=4)
+
+```
+
+Maybe a model of travel distance? 
+
+I'm going to drop inland fishing trips
+
+Also dropping in-state residents; residuals are lumpy.
+
+```{r}
+mod.data<-midatl.all.dist.east%>%
+  filter(area_x%in%c(1,2),
+         gear==1)%>%
+  mutate(shoreFish=ifelse(mode_f%in%c(1:5),1,0),
+         forHire=ifelse(mode_f%in%c(6,7),1,0),
+         stateWater=ifelse(area_x==1,1,0),
+         smf=ifelse(prim1_common=="SUMMER FLOUNDER",1,0),
+         bsb=ifelse(prim1_common=="BLACK SEA BASS", 1, 0),
+         scp=ifelse(prim1_common=="SCUP", 1, 0),
+         stusps=as.factor(stusps),
+         year=as.numeric(year),
+         year.f=as.factor(year))
+
+mod.data.outOfState<-mod.data%>%
+  filter(outOfState==1)
+```
+
+Target species are missing a lot of values, so start without using those. 
+
+fitting glm estimating effects of year, destination state, mode of fishing, and distance from shore (state vs fed waters) on travel distance. probably a gamma glm (or inverse gaussian, which I've never used)
+
+start with linear model, continuous year effect
+```{r}
+mod.lin<-lm(travelDist~stusps+year.f+shoreFish+forHire+stateWater, data=mod.data.outOfState )
+
+plot(mod.lin)
+```
+oh no, that's not going to work. 
+
+log transformed travel distance?
+
+```{r}
+mod.log<-lm(log(travelDist)~stusps+year.f+shoreFish+forHire+stateWater, data=mod.data.outOfState )
+
+plot(mod.log)
+
+summary(mod.log)
+```
+that still looks very odd, but better than what's coming. 
+
+significant but small negative trend through years. people travel further to get to NC (evident from earlier graphs), greater distance for shore fishing and for hire fishing than private. (interact with outOfState?)
+only fitting out of state travel times helps a lot.
+
+```{r}
+
+mod.gam<-glm(travelDist~stusps+year.f+shoreFish+forHire+stateWater, family=Gamma(link="log"),data=mod.data.outOfState)
+plot(mod.gam)
+```
+
+um what the fuck is that
+
+Inverse Gaussian?
+
+```{r}
+mod.inv<-glm((1+travelDist)~outOfState+stusps+year.f+shoreFish+forHire+stateWater, family=inverse.gaussian(link="1/mu^2"),data=mod.data)
+
+plot(mod.inv)
+
+```
+
+log normal is the best one so far. try linear trend of year again
+
+```{r}
+mod.log.lin<-lm(log(travelDist)~stusps+year+shoreFish+forHire+stateWater, data=mod.data.outOfState )
+
+plot(mod.log.lin)
+
+summary(mod.log.lin)
+
+AIC(mod.log, mod.log.lin)
+
+```
+
+ok keeping year categorical is a better fit. 
+
+So people tend to travel further for shore angling and for-hire angling than they do to fish on private or rental boats. I think that makes some logical sense; people who own a boat for marine fishing probably live close to the coast already. So how has shore and for-hire fishing (vs fishing on a private boat) changed over time? Might be able to look at FES for this. 
+
+
+```{r}
+effort<-read_csv(here::here("data","mrip_effort_series.csv"))
+
+effort.agg<-effort%>%
+  rename(year=Year,
+         wave=Wave,
+         state=State,
+         mode=`Fishing Mode`,
+         area=`Fishing Area`,
+         trips=`Angler Trips`)%>%
+  filter(state%in%c("CONNECTICUT","DELAWARE","MAINE","MARYLAND","MASSACHUSETTS","NEW HAMPSHIRE","NEW JERSEY","NEW YORK","NORTH CAROLINA","RHODE ISLAND","VIRGINIA"))%>%
+  mutate(trips=ifelse(trips==".",NA,trips),
+         trips=as.numeric(trips),
+         state=factor(state, levels=c("MAINE","NEW HAMPSHIRE","MASSACHUSETTS","RHODE ISLAND","CONNECTICUT","NEW YORK","NEW JERSEY","DELAWARE","MARYLAND","VIRGINIA","NORTH CAROLINA")))%>%
+  group_by(year, state, mode)%>%
+  summarize(trips=sum(trips, na.rm=T))%>%
+  ungroup()
+
+
+palette<-brewer.pal(5, "Set1")
+
+ggplot(effort.agg, aes(x=year, y=trips))+
+  geom_line(aes(color=mode))+
+  facet_grid(state~., scales="free_y")+
+  scale_color_manual(values=palette)+
+  theme_classic()
+ggsave(here::here("figures","effort.by.mode.png"), height=16, width=6)
+
+```
+so that's quite a big dip in 2020 in all kinds of fishign effort. Shore fishing had generally remained very high until then. This is assuming we can rely on these estimates, which, eh. I didn't cary through PSE, which is probably important. Just make a new query for annual estimates. 
+
+
+
+I'd like to make a map that shows location of origin for anglers intercepted in each state. Start with 1 summary figure across all years, and try animation with change over time? I've done that before, find the code. 
+
+=======
+>>>>>>> 2ffbcf0da5fc631df74260771f7a8fd82c9caa16
+Sudden spike in intercpets primarily targeting scup in NJ (especially from north), NY (from each direction), CT (from each direction) RI (from north), MA (from south)
 
 To do: 
-- match residence ZIP code to centroid lat long and US state
-- compare residence lat long to access point lat long, classify as traveling north or south
-- by state and year, summarize number of intercepts of out of state anglers traveling from 1) north and 2) south
-- by state and year, summarize number of intercepts of all anglers traveling from 1) north and 2) south
-- by state and year for summer flounder, black sea bass, and scup, summarize number of intercepts of out of state anglers traveling from north and south. 
-- fit time series models: categorical year effect, linear effect, seasonality (categorical by wave, probably)
-- maybe if I hate myself: collect state regulations to add as covariates. 
+- match residence ZIP code to centroid lat long and US state x
+- compare residence lat long to access point lat long, classify as traveling north or south x
+- by state and year, summarize number of intercepts of out of state anglers traveling from 1) north and 2) south x (yes, for midatlantic, coming from east)
+- by state and year, summarize number of intercepts of all anglers traveling from 1) north and 2) south (yes, for midatlantic, coming from east)
+- by state and year for summer flounder, black sea bass, and scup, summarize number of intercepts of out of state anglers traveling from north and south. (for midatlantic coming from east) 
+- fit time series models: categorical year effect, linear effect, seasonality (categorical by wave, probably) (maybe wait on this a minute)
+- maybe if I hate myself: collect state regulations to add as covariates. :(
+
+
+
+
+```{r}
+
+```
+
+)
