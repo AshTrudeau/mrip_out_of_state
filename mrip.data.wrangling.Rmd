@@ -449,8 +449,6 @@ ggsave(here::here("figures","scp.north.south.prop.by.state.png"), height=12, wid
 
 oh! that's interesting. really clear pattern of more people coming from north to RI, more people from south going to MA. 
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 number by region by year
 
 ```{r}
