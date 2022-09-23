@@ -450,6 +450,7 @@ ggsave(here::here("figures","scp.north.south.prop.by.state.png"), height=12, wid
 oh! that's interesting. really clear pattern of more people coming from north to RI, more people from south going to MA. 
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 number by region by year
 
 ```{r}
@@ -603,8 +604,7 @@ so that's quite a big dip in 2020 in all kinds of fishign effort. Shore fishing 
 
 I'd like to make a map that shows location of origin for anglers intercepted in each state. Start with 1 summary figure across all years, and try animation with change over time? I've done that before, find the code. 
 
-=======
->>>>>>> 2ffbcf0da5fc631df74260771f7a8fd82c9caa16
+
 Sudden spike in intercpets primarily targeting scup in NJ (especially from north), NY (from each direction), CT (from each direction) RI (from north), MA (from south)
 
 To do: 
