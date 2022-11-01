@@ -6,26 +6,218 @@ date: "2022-11-01"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize)
+pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, imputeTS, lme4, MuMIn, car, DHARMa)
 
 ```
 
-## R Markdown
+FES fishing effort estimates for federal waters. Remember change in methodology starting in 2018. 
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+Cleaning this data, checking for coverage, and then joining it to the reshaped regs, precipitation, and RHL covariates (Can I ask Chris for fuel prices?)
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+effort<-read_csv(here::here("data","mrip estimates","fed_eez_mrip_effort_series_modes_combined.csv"), skip=24)
 
-```{r cars}
-summary(cars)
+short.states<-tolower(c("Massachusetts","Connecticut","Rhode Island","New York","New Jersey","Delaware","Maryland","Virginia","North Carolina"))
+effort$State<-tolower(effort$State)
+
+names(effort)<-c("status","year","state","nTrips","PSE")
+
+effort.ts<-effort%>%
+  filter(state%in%short.states)%>%
+  mutate(nTrips=as.numeric(nTrips),
+         PSE=as.numeric(PSE),
+         SE=(PSE/100)*nTrips,
+         CI.upper=nTrips+1.96*SE,
+         CI.lower=nTrips-1.96*SE)
+
+palette<-brewer.pal(8, "Dark2")
+
+palette<-c(palette, "#000000")
+
+ggplot(effort.ts)+
+  geom_line(aes(x=year, y=nTrips, color=state))+
+  geom_point(aes(x=year, y=nTrips, color=state))+
+  geom_errorbar(aes(x=year, ymin=CI.lower, ymax=CI.upper), color="gray")+
+  scale_color_manual(values=palette)+
+  facet_grid(state~.)+
+  theme_classic()
+ggsave(here::here("figures","fes.effort.png"), height=12, width=6)
+
 ```
 
-## Including Plots
+Missing 2 Connecticut estimates; 1997 and 2001. I'll probably want to impute those. CT has low fishign effort overall compared to other states, and it looks (from here) fairly stable. 
 
-You can also embed plots, for example:
+```{r}
+ct<-filter(effort.ts, state=="connecticut")
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+ggplot(ct)+
+  geom_line(aes(x=year, y=nTrips))+
+  geom_point(aes(x=year, y=nTrips))+
+  geom_errorbar(aes(x=year, ymin=CI.lower, ymax=CI.upper), color="gray")+
+  theme_classic()
+
+ct.inp<-na_interpolation(ct$nTrips, option="linear")
+
+ggplot_na_imputations(ct$nTrips, ct.inp)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Linear imputation for two missing values. 
+
+```{r}
+ct$nTrips<-round(ct.inp)
+
+effort.ts.no.ct<-filter(effort.ts, state!="connecticut")
+
+effort.ts.ct.inp<-rbind.data.frame(effort.ts.no.ct, ct)
+
+effort.ts.final<-arrange(effort.ts.ct.inp, year, state)
+```
+
+
+Read in covariate df
+
+PROBLEM: duplicated rows in each of the output regs.  need to go back and fix that. 
+
+```{r}
+cov.df.bsb<-read_csv(here::here("output regs","regs.rhl.weather.bsb.csv"))
+cov.df.smf<-read_csv(here::here("output regs","regs.rhl.weather.smf.csv"))
+cov.df.scup<-read_csv(here::here("output regs","regs.rhl.weather.scup.csv"))
+
+cov.df.bsb.98<-filter(cov.df.bsb, year>1997)
+
+cov.df.smf$smf.daysOpen<-cov.df.smf$fedWaters_daysOpen
+cov.df.scup$scup.daysOpen<-cov.df.scup$fedWaters_daysOpen
+
+cov.df.smf$year_state<-paste(cov.df.smf$year, tolower(cov.df.smf$state), sep="_")
+cov.df.scup$year_state<-paste(cov.df.scup$year, tolower(cov.df.scup$state), sep="_")
+
+
+cov.df<-cov.df.bsb.98%>%
+  select(year, state, nRainyDays, fedWaters_daysOpen,  bsb.rhl)%>%
+  rename(bsb.daysOpen=fedWaters_daysOpen)%>%
+  mutate(year_state=paste(year, tolower(state), sep="_"))%>%
+  left_join(cov.df.smf[,c("year_state","smf.rhl", "smf.daysOpen")])%>%
+  left_join(cov.df.scup[,c("year_state","scup.rhl","scup.daysOpen")])
+```
+
+```{r}
+mod.df<-effort.ts.final%>%
+  select(year, state, nTrips, SE)%>%
+    filter(year>1997 & year<2020)%>%
+  mutate(year_state=paste(year, state, sep="_"))%>%
+  left_join(cov.df[,c("year_state","nRainyDays","bsb.daysOpen","smf.daysOpen","scup.daysOpen","bsb.rhl","smf.rhl","scup.rhl")])
+
+write.csv(mod.df, here::here("summary output", "mod.data.rain.days.rhl.csv"))
+
+
+hist(log(mod.df$nTrips))
+```
+
+```{r}
+mod.df$logTrips<-log(mod.df$nTrips)
+
+mod.df.sc<-mod.df%>%
+  mutate(logTrips=log(nTrips),
+         nRain.sc=scale(nRainyDays, center=T, scale=T),
+         bsb.daysOpen.sc=scale(bsb.daysOpen, center=T, scale=T),
+         smf.daysOpen.sc=scale(smf.daysOpen, center=T, scale=T),
+         scup.daysOpen.sc=scale(scup.daysOpen, center=T, scale=T),
+         smf.rhl.sc=scale(smf.rhl, center=T, scale=T),
+         bsb.rhl.sc=scale(bsb.rhl, center=T, scale=T),
+         scup.rhl.sc=scale(scup.rhl, center=T, scale=T))
+
+
+mod1<-lm(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc, data=mod.df.sc)
+
+plot(mod1)
+
+acf(resid(mod1))
+
+pacf(resid(mod1))
+```
+
+surprisingly okay fit, but temporal autocorrelation remains
+
+```{r}
+mod2<-lmer(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+(1|state), data=mod.df.sc, REML=T)
+
+plot(mod2)
+# the residuals look really bad
+
+plot(resid(mod2)~mod.df.sc$logTrips)
+
+vif(mod2)
+```
+multicollinearity might be a problem (but not a huge one--VIFs still lower than 5)
+
+```{r}
+plot(resid(mod2)~mod.df.sc$nRain.sc)
+```
+```{r}
+plot(resid(mod2)~mod.df.sc$bsb.daysOpen.sc)
+```
+```{r}
+plot(resid(mod2)~mod.df.sc$smf.daysOpen.sc)
+```
+```{r}
+plot(resid(mod2)~mod.df.sc$scup.daysOpen.sc)
+```
+```{r}
+plot(resid(mod2)~mod.df.sc$bsb.rhl.sc)
+```
+```{r}
+plot(resid(mod2)~mod.df.sc$smf.rhl.sc)
+```
+```{r}
+plot(resid(mod2)~mod.df.sc$scup.rhl.sc)
+```
+
+
+```{r}
+AICc(mod1, mod2)
+```
+
+```{r}
+summary(mod2)
+```
+try Gamma distribution?
+
+```{r}
+mod.gam<-glmer(nTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+(1|state), 
+               data=mod.df.sc, 
+               family = Gamma(link="log"))
+
+
+simOutput<-simulateResiduals(fittedModel=mod.gam)
+plot(simOutput)
+```
+
+```{r}
+mod.norm<-glmer(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+(1|state), 
+               data=mod.df.sc, 
+               family = gaussian(link="identity"))
+
+simOutput<-simulateResiduals(fittedModel=mod.norm)
+plot(simOutput)
+
+```
+```{r}
+mod.nb<-glmer.nb(nTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+(1|state), 
+               data=mod.df.sc)
+
+simOutput<-simulateResiduals(fittedModel=mod.nb)
+plot(simOutput)
+
+```
+```{r}
+summary(mod.nb)
+```
+
+
+
+Try adding AR term? 
+
+```{r}
+mod3<-lmer(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+(1|state), data=mod.df.sc, correlation = cor(AR1(form=~1|), REML=T)
+```
+

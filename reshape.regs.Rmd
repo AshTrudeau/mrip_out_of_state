@@ -1,0 +1,473 @@
+---
+title: "reshaping regs"
+output: html_document
+date: "2022-09-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse, here, readxl, openxlsx, lubridate, maps, mapproj)
+```
+
+Taking records of regulations that were shared with me, reshaping them into something useful. Each species is formatted differently. 
+
+Starting with black sea bass
+
+```{r}
+states<-c("Maine","New Hampshire","Massachusetts","Connecticut","Rhode Island","New York","New Jersey","Delaware","Maryland","Virginia","North Carolina")
+
+
+read_excel_allsheets <- function(filename, tibble = T) {
+    sheets <- readxl::excel_sheets(filename)
+    x <- lapply(sheets, function(X) openxlsx::read.xlsx(filename, 
+                                                        sheet = X, detectDates=T,
+                                                        startRow=2,
+                                                        fillMergedCells=T))
+    if(!tibble) x <- lapply(x, as.data.frame)
+    names(x) <- sheets
+    x
+}
+
+bsb<-read_excel_allsheets(here::here("state regs","Black Sea Bass Rec Measures since 2008.xlsx"))
+
+# remove last tab
+
+bsb$`All Years`<-NULL
+
+years<-names(bsb)
+
+bsb <- mapply(cbind, bsb, "year"=years, SIMPLIFY=F)
+
+bsb.df<-do.call(rbind.data.frame, bsb)
+```
+
+Now I need to reformat the open season column. I want to split the list of dates into discrete seasons, convert to long format, calculate days of each discrete season, and then add them together for a number of days open each year. 
+
+```{r}
+bsb.dates<-bsb.df%>%
+  select(year, State, Open.Season)
+```
+I am in hell. The date formats aren't consistent. may be best to edit those in excel. 
+
+```{r}
+write.csv(bsb.dates, here::here("output regs","bsb.dates.csv"))
+```
+
+And this is the easiest one :( 
+
+Adding 2021 BSB regs by state to bsb.dates.edited.csv
+```{r}
+bsb.clean<-read_csv(here::here("output regs", "bsb.dates.edited.csv"))
+
+
+bsb.clean$openDate<-mdy(paste(str_split_fixed(bsb.clean$Open.Season, " to ", 2)[,1], bsb.clean$year, sep=" "))
+
+bsb.clean$closeDate<-mdy(paste(str_split_fixed(bsb.clean$Open.Season, " to ", 2)[,2], bsb.clean$year, sep=" "))
+
+bsb.clean$daysOpen<-days(bsb.clean$closeDate-bsb.clean$openDate)
+
+# some sectors have different season lengths. I'm excluding CT for-hire and MA special permits
+
+bsb.clean.f<-filter(bsb.clean, tolower(Sector)%in%c("all","private and for-hire", "private and shore", "private & shore"))
+
+bsb.clean<-filter(bsb.clean.f, State%in%states)
+```
+
+
+Downside: needs 6 more years of regs for each state. (then regs are all federal, but still need to find those.)
+Edit: regs are not all federal for all species. It's more complicated than that. I do have federal regs from their earliest years by species. 
+
+
+Let's do summer flounder next
+
+This comes in a word document. Maybe paste them into excel as sheets like bsb, then read them in from there? 
+
+I did all of the cleaning (i think) by hand in excel. 
+
+```{r}
+
+read_excel_allsheets <- function(filename, tibble = T) {
+    sheets <- readxl::excel_sheets(filename)
+    x <- lapply(sheets, function(X) openxlsx::read.xlsx(filename, 
+                                                        sheet = X, detectDates=T,
+                                                        startRow=1,
+                                                        fillMergedCells=T))
+    if(!tibble) x <- lapply(x, as.data.frame)
+    names(x) <- sheets
+    x
+}
+
+smf<-read_excel_allsheets(here::here("state regs","summer flounder.xlsx"))
+
+years<-names(smf)
+
+smf <- mapply(cbind, smf, "year"=years, SIMPLIFY=F)
+
+smf.df<-do.call(rbind.data.frame, smf)
+
+
+smf.dates<-smf.df%>%
+  select(year, State, Open.Season)
+
+smf.dates$Open.Season<-ifelse(tolower(smf.dates$Open.Season)=="all year", "Jan. 1 - Dec. 31", smf.dates$Open.Season)
+
+
+smf.dates$openDate<-mdy(paste(str_split_fixed(smf.dates$Open.Season, " - ", 2)[,1], smf.dates$year, sep=" "))
+
+smf.dates$closeDate<-mdy(paste(str_split_fixed(smf.dates$Open.Season, " - ", 2)[,2], smf.dates$year, sep=" "))
+
+smf.dates$daysOpen<-days(smf.dates$closeDate-smf.dates$openDate)
+
+write.csv(smf.dates, here::here("output regs","smf.dates.csv"))
+
+# different sectors actually have the same season lengths for smf, so reducing complexity in edited version by removing separate sectors
+
+smf.dates<-read_csv(here::here("output regs","smf.dates.edited.csv"))
+
+smf.clean<-smf.dates%>%
+  select(year, State, Open.Season, openDate, closeDate, daysOpen)
+```
+
+
+And next scup.. Manually copied table into long mode, making a few adjustments in R here
+
+```{r}
+scup.df<-read_csv(here::here("state regs","state regs scup.csv"))
+
+
+scup.dates<-scup.df%>%
+  select(year, State, Open.Season)
+
+scup.dates$Open.Season<-ifelse(tolower(scup.dates$Open.Season)=="all year", "January 1-Dec. 31", scup.dates$Open.Season)
+
+
+scup.dates$openDate<-mdy(paste(str_split_fixed(scup.dates$Open.Season, "-", 2)[,1], scup.dates$year, sep=" "))
+
+scup.dates$closeDate<-mdy(paste(str_split_fixed(scup.dates$Open.Season, "-", 2)[,2], scup.dates$year, sep=" "))
+
+scup.dates$daysOpen<-days(scup.dates$closeDate-scup.dates$openDate)
+write.csv(scup.dates, here::here("output regs","scup.dates.csv"))
+
+
+scup.dates<-read_csv(here::here("output regs","scup.dates.edited.csv"))
+
+unique(scup.dates$State)
+
+```
+
+Need to separate these out by sector. 
+
+```{r}
+scup.clean<-scup.dates%>%
+  mutate(forHire=ifelse(str_detect(State, "for hire"), 1, 0),
+         private=ifelse(str_detect(State, "private"), 1, 0),
+         multiple=ifelse(str_detect(State, "two or more anglers"), 1, 0),
+         noSector=ifelse(forHire==0 & private == 0 & multiple==0, 1, 0))%>%
+  # for now let's keep only private anglers when there is more than one sector specified
+  filter(private==1 | noSector==1)%>%
+  select(year, State, Open.Season, openDate, closeDate, daysOpen)%>%
+  mutate(State=str_replace(State, " private", ""))
+# remove sector from state column
+
+```
+
+
+Now get days open for each species and state
+
+```{r}
+bsb.clean$Sector<-NULL
+
+bsb.clean$species<-"black sea bass"
+smf.clean$species<-"summer flounder"
+scup.clean$species<-"scup"
+
+bsb.clean[,c(2:7)]<-sapply(bsb.clean[,c(2:7)], as.character)
+
+all.spp<-rbind.data.frame(smf.clean, bsb.clean, scup.clean)
+
+names(all.spp)<-c("year","state","openSeason","openDate","closeDate","daysOpen","species")
+
+open.days<-all.spp%>%
+  mutate(daysOpen=as.numeric(str_split_fixed(daysOpen, "d ", 2)[,1]))%>%
+  group_by(species, year, state)%>%
+  summarize(nDaysOpen=sum(daysOpen+1))%>%
+  mutate(species_state_year=paste(species, state, year, sep="_"))%>%
+  ungroup()
+
+ggplot(open.days, aes(x=year, y=nDaysOpen, color=species))+
+  facet_grid(state~.)+
+  geom_line()+
+  theme_classic()
+ggsave(here::here("figures","state.ndays.png"), height=12, width=4)
+```
+am I missing some years? (other than what I already know f)
+
+```{r}
+nyears<-open.days%>%
+  group_by(species, state)%>%
+  summarize(nYears=length(unique(year)),
+            minYear=min(year),
+            maxYear=max(year))
+```
+
+
+Regs for BSB were coastwide until 2010. New Hampshire and Maine are at upper extent of SMF, BSB ranges. (also scup, I think)
+
+So now let's work with the federal regs
+
+```{r}
+fed.reg<-read_csv(here::here("state regs","federal regs.csv"))
+
+state.specific<-filter(fed.reg, season=="state-specific")
+
+fed.regs<-filter(fed.reg, season!="state-specific")
+
+fed.seasons<-fed.regs%>%
+  mutate(season=ifelse(season=="all year", "January 1-December 31", season),
+         openDate=mdy(paste(str_split_fixed(season, "-", 2)[,1], year, sep=" ")),
+         closeDate=mdy(paste(str_split_fixed(season, "-", 2)[,2], year, sep=" ")))%>%
+  mutate(daysOpen=days(closeDate-openDate),
+         daysOpen=as.numeric(str_split_fixed(daysOpen, "d", 2)[,1])+1)%>%
+  group_by(species, year)%>%
+  summarize(daysOpen=sum(daysOpen))%>%
+  ungroup()
+```
+
+
+
+So now I want to collate open seasons for state and federal waters. State regs always apply in state waters. In Federal waters, whichever is most restrictive (landing state or federal) applies. So anglers in federal waters may be subject to shorter season lengths in some years. 
+
+```{r}
+# first let's repeat federal regs for each state in years where separate federal regs existed
+
+# how many state years do we have for each species?
+
+nyears.species<-fed.seasons%>%
+  group_by(species)%>%
+  summarize(nYears=length(unique(year)),
+            minYear=min(year),
+            maxYear=max(year))
+
+# 22 years for scup, 24 for black sea bass, 8 for summer flounder. (lots of state specific years for summer flounder)
+
+# I have 11 states. Two of them have spotty regs for these species, which tend to be more southern. Let's drop them for now (NH and ME), giving us 9 states
+
+# BSB state specific year is 2022, which we're not dealing with. So it's just SMF that has state-specific regs in federal waters
+
+short.states<-c("Massachusetts","Connecticut","Rhode Island","New York","New Jersey","Delaware","Maryland","Virginia","North Carolina")
+
+# I need to repeat rows of fed.seasons once for each state. 
+
+fed.seasons.rep<-fed.seasons%>%
+  slice(rep(1:n(), each=length(short.states)))%>%
+  mutate(state=rep(short.states, 56))%>%
+  filter(year<2020)%>%
+  select(species, year, state, daysOpen)
+
+
+
+# now I want to add on years with state-specific regulations. This is summer flounder years 2002-2019
+smf.state.specific<-smf.clean%>%
+  filter(year>=2002 & year<=2019)%>%
+  rename(season=Open.Season,
+         state=State)%>%
+  mutate(daysOpen=as.numeric(str_split_fixed(daysOpen, "d", 2)[,1])+1,
+         species_state_year=paste(species, state, year, sep="_"))%>%
+  # some states have multiple seasons per year; need to combine those
+  group_by(year, state)%>%
+  summarize(daysOpen=sum(daysOpen),
+            species=unique(species))%>%
+  ungroup()
+
+
+fed.seasons<-rbind.data.frame(fed.seasons.rep, smf.state.specific)
+
+fed.seasons.df<-fed.seasons%>%
+  mutate(species_state_year=paste(species, state, year, sep="_"))%>%
+  arrange(species, year)
+
+
+# years where season length is 366 are leap years
+
+# checking we have same years for all species
+
+nyears.species<-fed.seasons.df%>%
+  group_by(species)%>%
+  summarize(nYears=length(unique(year)),
+            minYear=min(year),
+            maxYear=max(year))
+
+# right, not the same years exactly, but starting in year for each species where federal regs started. 
+
+```
+
+Next I need to compare season lengths with state regs. In state_years where state season is shorter than the federal season, the state season length applies to federal waters when fish are landed in that state.
+
+So I need to join the state regs to compare season lengths. but first I need to make sure that short seasons within years are combined into a total season length. Yes, I checked. They're good to go. 
+
+```{r}
+
+open.days$nDaysOpen_state<-open.days$nDaysOpen
+
+state.fed.seasons<-left_join(fed.seasons.df, open.days[,c("species_state_year","nDaysOpen_state")], by="species_state_year")
+
+state.fed.seasons.compare<-state.fed.seasons%>%
+  mutate(fed.shorter=ifelse(daysOpen<nDaysOpen_state, 1, 0),
+         state.shorter=ifelse(nDaysOpen_state<daysOpen, 1, 0))%>%
+  mutate(fedWaters_daysOpen=ifelse(fed.shorter==1, daysOpen,
+                                   ifelse(state.shorter==1, nDaysOpen_state,
+                                          ifelse(fed.shorter==0 & state.shorter==0, nDaysOpen_state, daysOpen))))%>%
+  mutate(fedWaters_daysOpen=ifelse(is.na(fed.shorter) & is.na(state.shorter), daysOpen, fedWaters_daysOpen))
+
+
+write.csv(state.fed.seasons.compare, here::here("output regs","state.federal.seasons.csv"))
+
+```
+
+So now i have a time series of open season days in federal waters since the start of federal regs for each species. 
+
+(unclear to me what recreational regs in federal waters were prior to this--same as states? none?)
+
+For now, get RHLs and weather data together
+
+```{r}
+rhl<-read_csv(here::here("state regs","rhl.csv"))
+
+ggplot(rhl, aes(x=year, y=`quota (millions of pounds)`, color=species))+
+  geom_line()+
+  theme_classic()
+```
+Summer flounder RHL was allocated to states between 2001 and 2013
+
+```{r}
+smf.01.13<-read_csv(here::here("state regs","smf.rhl.allocation.01.13.csv"))
+
+
+rhl.scup<-filter(rhl, species=="Scup")
+rhl.bsb<-filter(rhl, species=="Black sea bass")
+rhl.smf<-filter(rhl, species=="Summer flounder")
+```
+I'll do a similar thing for summer flounder as I did with season length, repeating the rhl (when it stays the same) for each state, and then pasting in the state-specific allocations for summer flounder. 
+Actually, no. The allocations were based on preious harvest. and the 'full' RHL isn't really the same for each state, it's coastal. 
+
+Weather data
+
+
+```{r}
+precip<-read_csv(here::here("data","coop.precipitation.csv"))
+```
+
+For this I want to estimate the number of rainy days for each state and year. This could be tricky because different coop locations go in and out of service. 
+
+Check for time series length by station
+
+Queried COOP hourly precipitation data for daily precipitation in box surrounding NE US
+
+```{r}
+length(unique(precip$STATION))
+
+states<-c("MA","CT","RI","NY","NJ","DE","MD","VA","NC","NH")
+
+precip.ts<-precip%>%
+  mutate(DATE=mdy(DATE),
+         year=year(DATE))%>%
+  group_by(STATION)%>%
+  summarize(nYears=length(unique(year)),
+            minYear=min(year),
+            maxYear=max(year),
+            stationName=unique(NAME),
+            lat=unique(LATITUDE),
+            long=unique(LONGITUDE))%>%
+  mutate(state_country=str_split_fixed(stationName, ", ",2)[,2],
+         state=str_split_fixed(state_country, " ", 2)[,1])%>%
+  filter(!is.na(stationName),
+         nYears>10,
+         state%in%states)
+
+
+# narrow it down to the furthest east? maximum longitude
+east<-precip.ts%>%
+  group_by(state)%>%
+  filter(long==max(long))
+
+stations<-east$STATION
+
+
+precip.data<-precip%>%
+  filter(STATION%in%stations,
+         DlySum!=-9999)%>%
+  mutate(date=mdy(DATE),
+         year=year(date))
+  
+  
+  
+summary(precip.data$DlySum)
+hist(precip.data$DlySum)
+```
+Let's say a bad weather day has at least 1 inch of precipitation. 
+
+```{r}
+bad.weather<-precip.data%>%
+  mutate(badWeather=ifelse(DlySum>99,1,0))%>%
+  group_by(NAME, year)%>%
+  summarize(nRainyDays=sum(badWeather))%>%
+  ungroup()%>%
+  mutate(state_country=str_split_fixed(NAME, ", ", 2)[,2],
+            state=str_split_fixed(state_country, " ", 2)[,1],
+         stationState_year=paste(state, year, sep="_"))
+
+ggplot(bad.weather)+
+  geom_line(aes(x=year, y=nRainyDays, color=NAME))
+```
+
+```{r}
+join.df<-data.frame(stationState=c("NH","NH","CT","CT","NJ","NJ","VA","VA","NC"), 
+                    state=c("Massachusetts","Rhode Island","New York","Connecticut","Delaware","New Jersey",
+                            "Maryland","Virginia","North Carolina"))
+```
+
+
+OK, now I have five sets of weather data; NH, CT, NJ, VA, NC
+
+Massachusetts and Rhode Island vessels--NH weather station
+New York and Connecticut--CT weather station
+Delaware and New Jersey--NJ weather station
+Maryland and Virginia: Virginia Weather station
+North Carolina: North Carolina weather station
+
+
+```{r}
+
+names(rhl.bsb)<-c("species","year","bsb.rhl")
+names(rhl.smf)<-c("species","year","smf.rhl")
+names(rhl.scup)<-c("species","year","scup.rhl")
+
+
+reg.data<-state.fed.seasons.compare%>%
+  select(species, year, state, fedWaters_daysOpen)%>%
+  left_join(join.df, by="state")%>%
+  mutate(stationState_year=paste(stationState, year, sep="_"))%>%
+  left_join(bad.weather[,c("nRainyDays","stationState_year")], by="stationState_year")%>%
+  left_join(rhl.bsb[,c("year","bsb.rhl")])%>%
+  left_join(rhl.smf[,c("year","smf.rhl")])%>%
+  left_join(rhl.scup[,c("year","scup.rhl")])
+
+
+smf.regs<-reg.data%>%
+  filter(species=="summer flounder")%>%
+  select(!c("bsb.rhl","scup.rhl"))
+
+bsb.regs<-reg.data%>%
+  filter(species=="black sea bass")%>%
+  select(!c("smf.rhl","scup.rhl"))
+
+scup.regs<-reg.data%>%
+  filter(species=="scup")%>%
+  select(!c("smf.rhl","bsb.rhl"))
+
+write.csv(smf.regs, here::here("output regs","regs.rhl.weather.smf.csv"))
+write.csv(bsb.regs, here::here("output regs","regs.rhl.weather.bsb.csv"))
+write.csv(scup.regs, here::here("output regs","regs.rhl.weather.scup.csv"))
+
+```
+
