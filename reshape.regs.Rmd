@@ -337,10 +337,8 @@ ggplot(rhl, aes(x=year, y=`quota (millions of pounds)`, color=species))+
   geom_line()+
   theme_classic()
 ```
-Summer flounder RHL was allocated to states between 2001 and 2013
 
 ```{r}
-smf.01.13<-read_csv(here::here("state regs","smf.rhl.allocation.01.13.csv"))
 
 
 rhl.scup<-filter(rhl, species=="Scup")
@@ -390,6 +388,9 @@ east<-precip.ts%>%
   group_by(state)%>%
   filter(long==max(long))
 
+east.backup<-precip.ts%>%
+  filter(STATION%in%c("USC00449151","USC00315830"))
+
 stations<-east$STATION
 
 
@@ -410,13 +411,32 @@ Let's say a bad weather day has at least 1 inch of precipitation.
 bad.weather<-precip.data%>%
   mutate(badWeather=ifelse(DlySum>99,1,0))%>%
   group_by(NAME, year)%>%
-  summarize(nRainyDays=sum(badWeather))%>%
+  summarize(nRainyDays=sum(badWeather, na.rm=T))%>%
   ungroup()%>%
   mutate(state_country=str_split_fixed(NAME, ", ", 2)[,2],
             state=str_split_fixed(state_country, " ", 2)[,1],
          stationState_year=paste(state, year, sep="_"))
 
-ggplot(bad.weather)+
+# NC and VA stations are missing a few years; fill them in from backup stations
+bad.weather.backup<-precip%>%
+  filter(STATION%in%east.backup$STATION,
+         DlySum!=-9999)%>%
+  mutate(date=mdy(DATE),
+         year=year(date))%>%
+  mutate(badWeather=ifelse(DlySum>99,1,0))%>%
+  group_by(NAME, year)%>%
+  summarize(nRainyDays=sum(badWeather, na.rm=T))%>%
+  ungroup()%>%
+  mutate(state_country=str_split_fixed(NAME, ", ", 2)[,2],
+            state=str_split_fixed(state_country, " ", 2)[,1],
+         stationState_year=paste(state, year, sep="_"))%>%
+  filter((year%in%c(1992, 1993) & state=="VA") | (year%in%c(1987:1991) & state=="NC"))
+
+# add missing years in
+bad.weather.fix<-arrange(rbind.data.frame(bad.weather, bad.weather.backup), year, state)
+
+
+ggplot(bad.weather.fix)+
   geom_line(aes(x=year, y=nRainyDays, color=NAME))
 ```
 
@@ -435,6 +455,24 @@ Delaware and New Jersey--NJ weather station
 Maryland and Virginia: Virginia Weather station
 North Carolina: North Carolina weather station
 
+Finally, SSB divided by states according to state waters approach
+
+```{r}
+ssb<-read_csv(here::here("ssb pdf","state.ssb.csv"))
+```
+I need to make state.fed.seasons.compare wider
+
+```{r}
+state.seasons.wide<-state.fed.seasons.compare%>%
+  select(species, year, state, fedWaters_daysOpen)%>%
+  pivot_wider(names_from=species, values_from=fedWaters_daysOpen)%>%
+  rename(bsb.season=`black sea bass`,
+         smf.season=`summer flounder`,
+         scup.season=scup)%>%
+  arrange(year, state)
+```
+
+2014 was missing from spring sampling. used fall for 2014 instead
 
 ```{r}
 
@@ -442,32 +480,38 @@ names(rhl.bsb)<-c("species","year","bsb.rhl")
 names(rhl.smf)<-c("species","year","smf.rhl")
 names(rhl.scup)<-c("species","year","scup.rhl")
 
+bad.weather.fix$stationState<-bad.weather.fix$state
 
-reg.data<-state.fed.seasons.compare%>%
-  select(species, year, state, fedWaters_daysOpen)%>%
+reg.rain.ssb<-ssb%>%
+  select(state, year, smf.state.ssb, bsb.state.ssb, scup.state.ssb)%>%
+  left_join(state.seasons.wide, by=c("year","state"))%>%
+  filter(state%in%short.states)%>%
   left_join(join.df, by="state")%>%
-  mutate(stationState_year=paste(stationState, year, sep="_"))%>%
-  left_join(bad.weather[,c("nRainyDays","stationState_year")], by="stationState_year")%>%
+  left_join(bad.weather.fix[,c("year","nRainyDays","stationState")], by=c("year","stationState"))%>%
+  # filling in years before federal regs with 365 days open
+  mutate(bsb.season=ifelse(is.na(bsb.season),365,bsb.season),
+         smf.season=ifelse(is.na(smf.season),365,smf.season),
+         scup.season=ifelse(is.na(scup.season),365,scup.season))%>%
+  filter(year>1981)%>%
   left_join(rhl.bsb[,c("year","bsb.rhl")])%>%
   left_join(rhl.smf[,c("year","smf.rhl")])%>%
   left_join(rhl.scup[,c("year","scup.rhl")])
 
 
-smf.regs<-reg.data%>%
-  filter(species=="summer flounder")%>%
-  select(!c("bsb.rhl","scup.rhl"))
+write.csv(reg.rain.ssb, here::here("output regs","ssb.rain.rhl.regs.csv"))
+```
 
-bsb.regs<-reg.data%>%
-  filter(species=="black sea bass")%>%
-  select(!c("smf.rhl","scup.rhl"))
+year check
 
-scup.regs<-reg.data%>%
-  filter(species=="scup")%>%
-  select(!c("smf.rhl","bsb.rhl"))
+```{r}
+nyear<-reg.rain.ssb%>%
+  group_by(state)%>%
+  summarize(nyear=length(unique(year)),
+            minyear=min(year),
+            maxyear=max(year))
 
-write.csv(smf.regs, here::here("output regs","regs.rhl.weather.smf.csv"))
-write.csv(bsb.regs, here::here("output regs","regs.rhl.weather.bsb.csv"))
-write.csv(scup.regs, here::here("output regs","regs.rhl.weather.scup.csv"))
+nyear
 
 ```
 
+ok, have every year this time

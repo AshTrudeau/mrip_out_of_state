@@ -3,3 +3,5 @@
 .RData
 .Ruserdata
 .data/
+.summary output/
+.stock distribution/

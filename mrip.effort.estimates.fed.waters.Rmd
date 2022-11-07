@@ -6,7 +6,7 @@ date: "2022-11-01"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, imputeTS, lme4, MuMIn, car, DHARMa)
+pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, imputeTS, lme4, MuMIn, car, DHARMa, TSA, forecast, tscount, nlme)
 
 ```
 
@@ -76,148 +76,185 @@ effort.ts.final<-arrange(effort.ts.ct.inp, year, state)
 
 Read in covariate df
 
-PROBLEM: duplicated rows in each of the output regs.  need to go back and fix that. 
-
 ```{r}
-cov.df.bsb<-read_csv(here::here("output regs","regs.rhl.weather.bsb.csv"))
-cov.df.smf<-read_csv(here::here("output regs","regs.rhl.weather.smf.csv"))
-cov.df.scup<-read_csv(here::here("output regs","regs.rhl.weather.scup.csv"))
-
-cov.df.bsb.98<-filter(cov.df.bsb, year>1997)
-
-cov.df.smf$smf.daysOpen<-cov.df.smf$fedWaters_daysOpen
-cov.df.scup$scup.daysOpen<-cov.df.scup$fedWaters_daysOpen
-
-cov.df.smf$year_state<-paste(cov.df.smf$year, tolower(cov.df.smf$state), sep="_")
-cov.df.scup$year_state<-paste(cov.df.scup$year, tolower(cov.df.scup$state), sep="_")
-
-
-cov.df<-cov.df.bsb.98%>%
-  select(year, state, nRainyDays, fedWaters_daysOpen,  bsb.rhl)%>%
-  rename(bsb.daysOpen=fedWaters_daysOpen)%>%
-  mutate(year_state=paste(year, tolower(state), sep="_"))%>%
-  left_join(cov.df.smf[,c("year_state","smf.rhl", "smf.daysOpen")])%>%
-  left_join(cov.df.scup[,c("year_state","scup.rhl","scup.daysOpen")])
+cov.df<-read_csv(here::here("output regs","ssb.rain.rhl.regs.csv"))
 ```
 
+So regulations weren't in place in federal waters (I think) until the 90s, but I have ssb data going back to at least 1989 for each stock. For now I can assume that 365 days/year were open in federal waters before implementation of federal regs. Rain data goes back as far as SSB estimates. RHL may be tricky--include (or substitute) an RHL indicator variable? 
+
+I'm going to fit separate models (for now) for each species. (the response variable will be the same). My number of observations are limited because of late RHL implementation. it may be worth at some point just adding an indicator variable for RHL exists or not. 
+
 ```{r}
+cov.df$state<-tolower(cov.df$state)
+
 mod.df<-effort.ts.final%>%
+  filter(year>1981 & year<2020)%>%
   select(year, state, nTrips, SE)%>%
-    filter(year>1997 & year<2020)%>%
-  mutate(year_state=paste(year, state, sep="_"))%>%
-  left_join(cov.df[,c("year_state","nRainyDays","bsb.daysOpen","smf.daysOpen","scup.daysOpen","bsb.rhl","smf.rhl","scup.rhl")])
+  left_join(cov.df[,c("year", "state","nRainyDays","bsb.season","smf.season","scup.season",
+                      "bsb.rhl","smf.rhl","scup.rhl",
+                      "bsb.state.ssb","smf.state.ssb","scup.state.ssb")], by=c("year","state"))
 
 write.csv(mod.df, here::here("summary output", "mod.data.rain.days.rhl.csv"))
 
 
+hist(mod.df$nTrips)
 hist(log(mod.df$nTrips))
+
+hist(log10(mod.df$nTrips))
 ```
+lognormal doesn't quite do it. 
 
 ```{r}
-mod.df$logTrips<-log(mod.df$nTrips)
+palette<-brewer.pal(length(unique(mod.df$state)), "Paired")
+ggplot(mod.df)+
+  geom_line(aes(x=year, y=nTrips, color=state))+
+  scale_color_manual(values=palette)+
+  theme_classic()
+```
+```{r}
+ggplot(mod.df)+
+  geom_line(aes(x=year, y=log(nTrips), color=state))+
+  scale_color_manual(values=palette)+
+  theme_classic()
+
+```
+This might go better if I drop Connecticut. Keep that in mind for later, CT has something strange happening whre the rec fishery just disappeared for 20 years. 
+
+```{r}
+mod.df.no.ct<-filter(mod.df, state!="connecticut")
+
+ggplot(mod.df.no.ct)+
+  geom_line(aes(x=year, y=log(nTrips), color=state))+
+  scale_color_manual(values=palette)+
+  theme_classic()
+
+hist(mod.df.no.ct$nTrips)
+
+hist(log(mod.df.no.ct$nTrips))
+
+```
+Yeah, that might help with the residual problems I was getting on the first version of these models. 
+
+
+```{r}
 
 mod.df.sc<-mod.df%>%
   mutate(logTrips=log(nTrips),
          nRain.sc=scale(nRainyDays, center=T, scale=T),
-         bsb.daysOpen.sc=scale(bsb.daysOpen, center=T, scale=T),
-         smf.daysOpen.sc=scale(smf.daysOpen, center=T, scale=T),
-         scup.daysOpen.sc=scale(scup.daysOpen, center=T, scale=T),
+         bsb.daysOpen.sc=scale(bsb.season, center=T, scale=T),
+         smf.daysOpen.sc=scale(smf.season, center=T, scale=T),
+         scup.daysOpen.sc=scale(scup.season, center=T, scale=T),
          smf.rhl.sc=scale(smf.rhl, center=T, scale=T),
          bsb.rhl.sc=scale(bsb.rhl, center=T, scale=T),
-         scup.rhl.sc=scale(scup.rhl, center=T, scale=T))
+         scup.rhl.sc=scale(scup.rhl, center=T, scale=T),
+         bsb.rhl.ind=ifelse(is.na(bsb.rhl), 0, 1),
+         smf.rhl.ind=ifelse(is.na(smf.rhl), 0, 1),
+         scup.rhl.ind=ifelse(is.na(scup.rhl), 0, 1),
+         bsb.ssb.sc=scale(bsb.state.ssb, center=T, scale=T),
+         smf.ssb.sc=scale(smf.state.ssb, center=T, scale=T),
+         scup.ssb.sc=scale(scup.state.ssb, center=T, scale=T))%>%
+  # if I start testing species regs in separate models, I can extend the time series further. This time series is limited by black sea bass and summer flounder ssb availability
+  filter(year>1988 & year<2018)
 
 
-mod1<-lm(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc, data=mod.df.sc)
+mod.basic<-lm(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+
+                smf.rhl.ind+bsb.rhl.ind+scup.rhl.ind+
+                bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc, data=mod.df.sc)
 
-plot(mod1)
+plot(mod.basic)
 
-acf(resid(mod1))
+acf(resid(mod.basic))
 
-pacf(resid(mod1))
+pacf(resid(mod.basic))
+
+vif(mod.basic)
 ```
 
-surprisingly okay fit, but temporal autocorrelation remains
+Autocorrelation is a real problem, residuals are definitely not normally distributed. But reasonable variance of residuals at least. 
+
+VIF is higher than optimal, but always lower than 10. 
+```{r}
+summary(mod.basic)
+```
+IN this initial model, only SSB has a significant effect on log n trips. positive effect for bsb and smf, negative for scup (for some reason). 
+
+lme_simple_fit <- lme(y~1,random=~1|f,data=d,correlation=corAR1())
 
 ```{r}
-mod2<-lmer(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+(1|state), data=mod.df.sc, REML=T)
+mod.df.sc.drop<-filter(mod.df.sc, state!="connecticut")
 
-plot(mod2)
-# the residuals look really bad
 
-plot(resid(mod2)~mod.df.sc$logTrips)
+mod.lme<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+
+                smf.rhl.ind+bsb.rhl.ind+scup.rhl.ind+
+                bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc,
+                random=~1|state, data=mod.df.sc.drop,
+               correlation=corAR1(form=~year|state))
 
-vif(mod2)
-```
-multicollinearity might be a problem (but not a huge one--VIFs still lower than 5)
 
-```{r}
-plot(resid(mod2)~mod.df.sc$nRain.sc)
-```
-```{r}
-plot(resid(mod2)~mod.df.sc$bsb.daysOpen.sc)
-```
-```{r}
-plot(resid(mod2)~mod.df.sc$smf.daysOpen.sc)
-```
-```{r}
-plot(resid(mod2)~mod.df.sc$scup.daysOpen.sc)
-```
-```{r}
-plot(resid(mod2)~mod.df.sc$bsb.rhl.sc)
-```
-```{r}
-plot(resid(mod2)~mod.df.sc$smf.rhl.sc)
+plot(mod.lme)
+# the residuals look really bad--that might be Connecticut?
+
+plot(resid(mod.lme)~as.factor(mod.df.sc.drop$state))
+
+summary(mod.lme)
 ```
 ```{r}
-plot(resid(mod2)~mod.df.sc$scup.rhl.sc)
-```
-
-
-```{r}
-AICc(mod1, mod2)
-```
-
-```{r}
-summary(mod2)
-```
-try Gamma distribution?
-
-```{r}
-mod.gam<-glmer(nTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+(1|state), 
-               data=mod.df.sc, 
-               family = Gamma(link="log"))
-
-
-simOutput<-simulateResiduals(fittedModel=mod.gam)
-plot(simOutput)
-```
-
-```{r}
-mod.norm<-glmer(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+(1|state), 
-               data=mod.df.sc, 
-               family = gaussian(link="identity"))
-
-simOutput<-simulateResiduals(fittedModel=mod.norm)
-plot(simOutput)
-
+plot(ACF(mod.lme, alpha=0.05))
 ```
 ```{r}
-mod.nb<-glmer.nb(nTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+(1|state), 
-               data=mod.df.sc)
 
-simOutput<-simulateResiduals(fittedModel=mod.nb)
-plot(simOutput)
+mod.lme.ar1<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+
+                smf.rhl.ind+bsb.rhl.ind+scup.rhl.ind+
+                bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc,
+                random=~1|state, data=mod.df.sc.drop,
+                correlation=corAR1(form=~year|state))
 
+
+plot(ACF(mod.lme.ar1))
+mod.lme.ar1ma1<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+
+                smf.rhl.ind+bsb.rhl.ind+scup.rhl.ind+
+                bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc,
+                random=~1|state, data=mod.df.sc.drop,
+                correlation=corARMA(form=~year|state, p=1, q=1))
+
+plot(ACF(mod.lme.ar1ma1))
+
+mod.lme.ar2<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+
+                smf.rhl.ind+bsb.rhl.ind+scup.rhl.ind+
+                bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc,
+                random=~1|state, data=mod.df.sc.drop,
+                correlation=corARMA(form=~year|state, p=2, q=0))
+
+plot(ACF(mod.lme.ar2ma1))
+
+
+mod.lme.ar2ma2<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+
+                smf.rhl.ind+bsb.rhl.ind+scup.rhl.ind+
+                bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc,
+                random=~1|state, data=mod.df.sc.drop,
+                correlation=corARMA(form=~year|state, p=2, q=2))
+
+plot(ACF(mod.lme.ar2ma2))
+
+mod.lme.ar1ma2<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+
+                smf.rhl.ind+bsb.rhl.ind+scup.rhl.ind+
+                bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc,
+                random=~1|state, data=mod.df.sc.drop,
+                correlation=corARMA(form=~year|state, p=1, q=2))
+
+plot(ACF(mod.lme.ar1ma2))
+
+mod.lme.ar3<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+
+                smf.rhl.ind+bsb.rhl.ind+scup.rhl.ind+
+                bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc,
+                random=~1|state, data=mod.df.sc.drop,
+                correlation=corARMA(form=~year|state, p=3, q=0))
+plot(ACF(mod.lme.ar3))
+
+AICc(mod.lme.ar1, mod.lme.ar1ma1, mod.lme.ar2, mod.lme.ar2ma2, mod.lme.ar1ma2, mod.lme.ar3)
 ```
-```{r}
-summary(mod.nb)
-```
-
-
-
-Try adding AR term? 
 
 ```{r}
-mod3<-lmer(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+(1|state), data=mod.df.sc, correlation = cor(AR1(form=~1|), REML=T)
+plot(ACF(mod.lme.ar1ma1, resType="normalized",alpha=0.05))
 ```
 
