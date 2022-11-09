@@ -120,6 +120,35 @@ ggplot(mod.df)+
 ```
 This might go better if I drop Connecticut. Keep that in mind for later, CT has something strange happening whre the rec fishery just disappeared for 20 years. 
 
+SSB plots
+
+```{r}
+bsb<-ggplot(mod.df)+
+  geom_line(aes(x=year, y=bsb.state.ssb, color=state))+
+  scale_color_manual(values=palette)+
+  ggtitle("Black sea bass")+
+  theme_classic()
+
+smf<-ggplot(mod.df)+
+  geom_line(aes(x=year, y=smf.state.ssb, color=state))+
+  scale_color_manual(values=palette)+
+  ggtitle("Summer flounder")+
+  theme_classic()
+
+
+scup<-ggplot(mod.df)+
+  geom_line(aes(x=year, y=scup.state.ssb, color=state))+
+  scale_color_manual(values=palette)+
+  ggtitle("Scup")+
+  theme_classic()
+
+library(cowplot)
+plot_grid(bsb, smf, scup, nrow=3)
+ggsave(here::here("figures","stock.ssb.png"), height=12, width=6)
+
+```
+
+
 ```{r}
 mod.df.no.ct<-filter(mod.df, state!="connecticut")
 
@@ -492,5 +521,255 @@ mod.bsb.fit<-mod.bsb.join%>%
   )
 
 names(mod.bsb.fit$fitted)<-mod.bsb.join$state
-```
 
+bsb.ct<-mod.bsb.fit$fitted$connecticut
+acf(bsb.ct$residuals)
+```
+emerging effects for bsb fit: 
+
+CT: positive SSB (very high)
+NY: positive SSB, positive RHL, positive rain?? (very small)
+NC: another positive rain
+RI: positive RHL
+
+may be a problem with spurious correlations here. try running a longer time series after this with just weather and ssb for each species
+
+summer flounder
+
+```{r}
+mod.smf.nest<-mod.df.sc%>%
+  filter(year>1992)%>%
+  #select(state, logTrips)%>%
+  group_by(state)%>%
+  nest(.key="data")
+
+# new auto_arima function that adds xreg? 
+
+auto_arima_smf<-function(df){
+  xreg.smf<-cbind(nRainyDays=as.numeric(df$nRainyDays),
+                  daysOpen=as.numeric(df$smf.daysOpen.sc),
+                  rhl=as.numeric(df$smf.rhl.sc),
+                  ssb=as.numeric(df$smf.ssb.sc))
+  fit<-auto.arima(df$logTrips, xreg=xreg.smf, seasonal=F)
+  return(fit)
+}
+
+# leaving room to add in other models if necessary
+model<-list(
+  auto_arima = function(x) auto_arima_smf(x))
+
+model%<>%
+  rep(length(unique(mod.smf.nest$state)))%>%
+  enframe("model_name","model")%>%
+  mutate(state=sort(rep(unique(mod.smf.nest$state, length(unique(.$model_name))))))
+
+
+mod.smf.join<-mod.smf.nest%>%
+  left_join(model)
+
+# doing it without xreg for now, then see how I can add those in
+
+mod.smf.fit<-mod.smf.join%>%
+  mutate(
+    params = map(data, ~ list(x=.x)),
+    fitted = invoke_map(model, params)
+
+  )
+
+names(mod.smf.fit$fitted)<-mod.smf.join$state
+
+mod.smf.fit$fitted
+
+```
+CT: negative effect of rhl (weird)
+DE: very high positive effect of SSB
+RI: positive effect of RHL
+VA: positive effect of RHL
+```{r}
+mod.scup.nest<-mod.df.sc%>%
+  filter(year>1996)%>%
+  #select(state, logTrips)%>%
+  group_by(state)%>%
+  nest(.key="data")
+
+# new auto_arima function that adds xreg? 
+
+auto_arima_scup<-function(df){
+  xreg.scup<-cbind(nRainyDays=as.numeric(df$nRainyDays),
+                  daysOpen=as.numeric(df$scup.daysOpen.sc),
+                  rhl=as.numeric(df$scup.rhl.sc),
+                  ssb=as.numeric(df$scup.ssb.sc))
+  fit<-auto.arima(df$logTrips, xreg=xreg.scup, seasonal=F)
+  return(fit)
+}
+
+# leaving room to add in other models if necessary
+model<-list(
+  auto_arima = function(x) auto_arima_scup(x))
+
+model%<>%
+  rep(length(unique(mod.scup.nest$state)))%>%
+  enframe("model_name","model")%>%
+  mutate(state=sort(rep(unique(mod.scup.nest$state, length(unique(.$model_name))))))
+
+
+mod.scup.join<-mod.scup.nest%>%
+  left_join(model)
+
+# doing it without xreg for now, then see how I can add those in
+
+mod.scup.fit<-mod.scup.join%>%
+  mutate(
+    params = map(data, ~ list(x=.x)),
+    fitted = invoke_map(model, params)
+
+  )
+
+names(mod.scup.fit$fitted)<-mod.scup.join$state
+
+mod.scup.fit$fitted
+
+
+```
+NC: positive effect of nrainy days (weird)
+VA: negative effect of RHL (also weird)
+
+oh shoot, i forgot to use scaled rainy days.
+
+Let's try just an SSB (and rain) model--much longer time series. maybe add indicators for implementation of RHLs next and/or length of season. 
+
+```{r}
+mod.ssb.nest<-mod.df.sc%>%
+  group_by(state)%>%
+  nest(.key="data")
+
+# new auto_arima function that adds xreg? 
+
+auto_arima_ssb<-function(df){
+  xreg.ssb<-cbind(nRainyDays=as.numeric(df$nRain.sc),
+                  bsb.ssb=as.numeric(df$bsb.ssb.sc),
+                  smf.ssb=as.numeric(df$smf.ssb.sc),
+                  scup.ssb=as.numeric(df$scup.ssb.sc))
+  
+  fit<-auto.arima(df$logTrips, xreg=xreg.ssb, seasonal=F)
+  return(fit)
+}
+
+# leaving room to add in other models if necessary
+model<-list(
+  auto_arima = function(x) auto_arima_ssb(x))
+
+model%<>%
+  rep(length(unique(mod.ssb.nest$state)))%>%
+  enframe("model_name","model")%>%
+  mutate(state=sort(rep(unique(mod.ssb.nest$state, length(unique(.$model_name))))))
+
+
+mod.ssb.join<-mod.ssb.nest%>%
+  left_join(model)
+
+# doing it without xreg for now, then see how I can add those in
+
+mod.ssb.fit<-mod.ssb.join%>%
+  mutate(
+    params = map(data, ~ list(x=.x)),
+    fitted = invoke_map(model, params)
+
+  )
+
+names(mod.ssb.fit$fitted)<-mod.ssb.join$state
+
+mod.ssb.fit$fitted
+
+
+
+```
+CT: big positive effect of bsb.ssb
+DE: big positive effects of bsb and smf ssb. negative effect of scup ssb
+MA: positive smf ssb
+NJ: positive smf ssb
+NC: large negative smf ssb, weird. 
+- positive trend in fishing effort; probably variable we're missing.
+RI: positive bsb and smf, negative scup. 
+VA: negative bsb
+
+huh, lots of these are ARIMA (0,0,0). 
+
+Try adding season length
+
+```{r}
+mod.ssb.nest<-mod.df.sc%>%
+  group_by(state)%>%
+  nest(.key="data")
+
+# new auto_arima function that adds xreg? 
+
+auto_arima_ssb<-function(df){
+  xreg.ssb<-cbind(nRainyDays=as.numeric(df$nRain.sc),
+                  bsb.ssb=as.numeric(df$bsb.ssb.sc),
+                  smf.ssb=as.numeric(df$smf.ssb.sc),
+                  scup.ssb=as.numeric(df$scup.ssb.sc),
+                  bsb.daysOpen=as.numeric(df$bsb.daysOpen.sc),
+                  smf.daysOpen=as.numeric(df$smf.daysOpen.sc),
+                  scup.daysOpen=as.numeric(df$scup.daysOpen.sc))
+  
+  fit<-auto.arima(df$logTrips, xreg=xreg.ssb, seasonal=F)
+  return(fit)
+}
+
+# leaving room to add in other models if necessary
+model<-list(
+  auto_arima = function(x) auto_arima_ssb(x))
+
+model%<>%
+  rep(length(unique(mod.ssb.nest$state)))%>%
+  enframe("model_name","model")%>%
+  mutate(state=sort(rep(unique(mod.ssb.nest$state, length(unique(.$model_name))))))
+
+
+mod.ssb.join<-mod.ssb.nest%>%
+  left_join(model)
+
+# doing it without xreg for now, then see how I can add those in
+
+mod.ssb.fit<-mod.ssb.join%>%
+  mutate(
+    params = map(data, ~ list(x=.x)),
+    fitted = invoke_map(model, params)
+
+  )
+
+names(mod.ssb.fit$fitted)<-mod.ssb.join$state
+
+mod.ssb.fit$fitted
+
+
+
+
+```
+CT: bsb smf positive
+DE: rainy days negative, bsb ssb positive, smf ssb positive, scup ssb negative, bsb days open positive, scup days open negative
+NJ: smf ssb is positive
+NY: bsb ssb positive, bsb days open positive
+RI: bsb ssb positive, scup ssb negative
+
+what's goign on with scup? spurious? confounding change in attitudes/expectations towards fishing?
+
+
+I need to plot ssb
+OK i see the problem. Only summer flounder has any real contrast in SSB: there's a big decrease in the 80s, which we catch the last bit of. Then an icnrease again reaching a peak in 2000. Some decline again after that. For black sea bass and scup, we mostly see an upward trajectory, not nearly as much contrast. BSB has a little contrast in later years--seeing it decline back down from a peak in the mid 2010s. 
+
+
+May be seeing CT, DE, NJ, NY profiting from this expansion northwards in terms of revenue from rec fishing effort. But the picture is blurry, and it's difficult to disentangle effects of stocks from regulations and general attitude of angling public. Stocks went from kind of low everywhere to remaining low in southern states but exploding further north. New York in particular is experiencing high availability of stocks
+
+NY has a reasonably clear story--positive responses in particular to black sea bass. Interestingly, no significant response to summer flounder, in spite of being a clear 'winner' in ssb distribution. history of strict smf limits? more likely to switch to bsb?
+
+CT--very clear response to smf and bsb, in spite of not being in the top for access to these stocks. (look at juliano's graphics again)
+
+NJ is where i woudl expect--they're obsessed with SMF, also near the top in SSB distribution. 
+
+RI is confusing.sort of on a negative trend anyway. (though i did see a blog about scup in RI recently that suggests it's not seen as a valuable target. 'sunfish of the sea')
+
+Are anglers from different states showing different willingness to switch target species? that could be an interesting question to get into. May depend on state's history of regulations. suddenly a species that is not regulated heavily appears in waters. Didn't see evidence of regulatory spiral in NJ because it's happening at a larger spatial scale? Just a hypothesis, but look into it. 
+
+Maybe if I look again at movement among states I can find some possible explanations
