@@ -207,7 +207,7 @@ mod.lme.ar1<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen
                 smf.rhl.ind+bsb.rhl.ind+scup.rhl.ind+
                 bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc,
                 random=~1|state, data=mod.df.sc.drop,
-                correlation=corAR1(form=~year|state))
+                correlation=corAR1(form=~year|state), method="ML")
 
 
 plot(ACF(mod.lme.ar1))
@@ -225,7 +225,6 @@ mod.lme.ar2<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen
                 random=~1|state, data=mod.df.sc.drop,
                 correlation=corARMA(form=~year|state, p=2, q=0))
 
-plot(ACF(mod.lme.ar2ma1))
 
 
 mod.lme.ar2ma2<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+
@@ -255,6 +254,243 @@ AICc(mod.lme.ar1, mod.lme.ar1ma1, mod.lme.ar2, mod.lme.ar2ma2, mod.lme.ar1ma2, m
 ```
 
 ```{r}
-plot(ACF(mod.lme.ar1ma1, resType="normalized",alpha=0.05))
+plot(ACF(mod.lme.ar1ma1, resType="normalized"),alpha=0.05)
+```
+
+Nothing I do with ARMA components do much to change the ACF. I don' tknow why. 
+
+```{r}
+drop1(mod.lme.ar1, test="Chisq")
+```
+Try a longer time series? SMF covariates only? 
+
+```{r}
+mod.df.sc.smf<-mod.df%>%
+  mutate(logTrips=log(nTrips),
+         nRain.sc=scale(nRainyDays, center=T, scale=T),
+         smf.daysOpen.sc=scale(smf.season, center=T, scale=T),
+         smf.rhl.sc=scale(smf.rhl, center=T, scale=T),
+         smf.rhl.ind=ifelse(is.na(smf.rhl),0,1),
+         smf.ssb.sc=scale(smf.state.ssb, center=T, scale=T))%>%
+  filter(year<2018)
+
+mod.smf<-lme(logTrips~nRain.sc+smf.daysOpen.sc+
+                smf.rhl.ind+
+                smf.ssb.sc,
+                random=~1|state, data=mod.df.sc.smf,
+                correlation=corAR1(form=~year|state), method="ML")
+
+plot(ACF(mod.smf))
+
+summary(mod.smf)
+
+drop1(mod.smf, test="Chisq")
+```
+
+ok, maybe instead use the actual RHL values and all species--this further constricts the time series
+
+```{r}
+mod.df.short<-mod.df.sc.drop%>%
+  filter(year>1997 & year<2018)
+
+mod.short<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc+
+                smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc+
+                bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc,
+                random=~1|state, data=mod.df.short,
+               correlation=corARMA(form=~year|state, p=1, q=1), 
+                method="ML")
+
+plot(ACF(mod.short), alpha=0.05)
+```
+That's better, but still has an autocorrelation problem
+```{r}
+plot(mod.short)
+```
+
+```{r}
+summary(mod.short)
+
+drop1(mod.short, test="Chisq")
+```
+run model selection instead? compete days open, rhl, and ssb for all species?
+
+```{r}
+
+
+mod.daysOpen<-lme(logTrips~nRain.sc+bsb.daysOpen.sc+smf.daysOpen.sc+scup.daysOpen.sc,
+              random=~1|state, data=mod.df.short,
+               correlation=corARMA(form=~year|state, p=1, q=1), 
+                method="ML")
+plot(ACF(mod.daysOpen), alpha=0.05)
+
+mod.rhl<-lme(logTrips~nRain.sc+
+                smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc,
+                random=~1|state, data=mod.df.short,
+               correlation=corARMA(form=~year|state, p=1, q=1), 
+                method="ML")
+plot(ACF(mod.rhl), alpha=0.05)
+
+mod.ssb<-lme(logTrips~nRain.sc+
+                bsb.ssb.sc+smf.ssb.sc+scup.ssb.sc,
+                random=~1|state, data=mod.df.short,
+               correlation=corARMA(form=~year|state, p=1, q=1), 
+                method="ML")
+plot(ACF(mod.rhl), alpha=0.05)
+```
+
+```{r}
+AICc(mod.daysOpen, mod.rhl, mod.ssb)
+```
+
+```{r}
+summary(mod.rhl)
+drop1(mod.rhl, test="Chisq")
+```
+
+```{r}
+summary(mod.daysOpen)
+```
+
+```{r}
+summary(mod.ssb)
+```
+
+OK, so rhl-only model fits better. Only black sea bass RHL emerges as a significant preditor of nTrips in a given year. Still have a largely unaddressed autocorrelation problem. 
+
+Fitting separate models by state might be more informative. as a quick check, though, I'm going to add a random slope of bsb rhl by state to see if it does affect states differently
+
+```{r}
+mod.rhl.int<-lme(logTrips~nRain.sc+
+                smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc,
+                random=~1|state, data=mod.df.short,
+               correlation=corARMA(form=~year|state, p=1, q=1), 
+                method="REML")
+
+mod.rhl.slope<-lme(logTrips~nRain.sc+
+                smf.rhl.sc+bsb.rhl.sc+scup.rhl.sc,
+                random=~bsb.rhl.sc|state, data=mod.df.short,
+               correlation=corARMA(form=~year|state, p=1, q=1), 
+                method="REML")
+
+AICc(mod.rhl.int, mod.rhl.slope)
+
+```
+
+no strong evidence of different effects here. 
+
+Run a loop? Make sure to put connecticut back. the length of the time series is more of a problem if I"m going by state. I'm going to try just summer flounder regs, rhl, and ssb first. 
+
+mod1<-forecast::auto.arima(data.regs$totalAnglers, xreg=xreg, seasonal=T, stepwise=T, approximation=T)
+
+xreg<-cbind(t.bsb.MLL=as.numeric(data.regs$t.bsb.MLL),
+            bsb.PL=as.numeric(data.regs$bsb.PL),
+            t.smf.MLL=as.numeric(data.regs$t.smf.MLL),
+            smf.PL=as.numeric(data.regs$smf.PL),
+            t.tog.MLL=as.numeric(data.regs$t.tog.MLL),
+            tog.PL=as.numeric(data.regs$tog.PL),
+            t.scp.MLL=as.numeric(data.regs$t.scp.MLL),
+            scp.PL=as.numeric(data.regs$scp.PL),
+            feb=as.numeric(data.regs$feb),
+             mar=as.numeric(data.regs$mar),
+             apr=as.numeric(data.regs$apr),
+             may=as.numeric(data.regs$may),
+             jun=as.numeric(data.regs$jun),
+             jul=as.numeric(data.regs$jul),
+             aug=as.numeric(data.regs$aug),
+             sep=as.numeric(data.regs$sep),
+             oct=as.numeric(data.regs$oct),
+             nov=as.numeric(data.regs$nov),
+             dec=as.numeric(data.regs$dec))
+
+
+I've been entirely on the wrong track; i want to use purrr instead. 
+
+
+```{r}
+# start with just fitting linear model
+
+mod.fit.bsb<-mod.df.sc%>%
+  filter(year>1997)%>%
+  split(.$state)%>%
+  map(~ lm(logTrips~bsb.daysOpen.sc+bsb.rhl.sc+bsb.ssb.sc, data=.))%>%
+  map(summary)
+
+mod.fit.smf<-mod.df.sc%>%
+  filter(year>1992)%>%
+  split(.$state)%>%
+  map(~ lm(logTrips~smf.daysOpen.sc+smf.rhl.sc+smf.ssb.sc, data=.))%>%
+  map(summary)
+
+
+mod.fit.scup<-mod.df.sc%>%
+  filter(year>1996)%>%
+  split(.$state)%>%
+  map(~ lm(logTrips~scup.daysOpen.sc+scup.rhl.sc+scup.ssb.sc, data=.))%>%
+  map(summary)
+
+mod.fit.bsb
+mod.fit.smf
+mod.fit.scup
+```
+
+
+```{r}
+bsb.ny<-filter(mod.df.sc, state=="new york" & year>1997)
+
+xreg.bsb.ny<-cbind(nRainyDays=as.numeric(bsb.ny$nRainyDays),
+                daysOpen=as.numeric(bsb.ny$smf.daysOpen.sc),
+                rhl=as.numeric(bsb.ny$smf.rhl.sc),
+                ssb=as.numeric(bsb.ny$smf.ssb.sc)
+                )
+
+
+
+ny.mod<-auto.arima(bsb.ny$logTrips, xreg=xreg.bsb.ny, seasonal=F)
+```
+OK, so I want to learn how to split the data by state, use auto.arima to fit an arima model to each chunk, and return a summary of the model fit.
+I think this will help: https://algotech.netlify.app/blog/purrr-operly-fitting-multiple-time-series-model/ 
+
+```{r}
+
+mod.bsb.nest<-mod.df.sc%>%
+  filter(year>1997)%>%
+  #select(state, logTrips)%>%
+  group_by(state)%>%
+  nest(.key="data")
+
+# new auto_arima function that adds xreg? 
+
+auto_arima_bsb<-function(df){
+  xreg.bsb<-cbind(nRainyDays=as.numeric(df$nRainyDays),
+                  daysOpen=as.numeric(df$bsb.daysOpen.sc),
+                  rhl=as.numeric(df$bsb.rhl.sc),
+                  ssb=as.numeric(df$bsb.ssb.sc))
+  fit<-auto.arima(df$logTrips, xreg=xreg.bsb, seasonal=F)
+  return(fit)
+}
+
+# leaving room to add in other models if necessary
+model<-list(
+  auto_arima = function(x) auto_arima_bsb(x))
+
+model%<>%
+  rep(length(unique(mod.bsb.nest$state)))%>%
+  enframe("model_name","model")%>%
+  mutate(state=sort(rep(unique(mod.bsb.nest$state, length(unique(.$model_name))))))
+
+
+mod.bsb.join<-mod.bsb.nest%>%
+  left_join(model)
+
+# doing it without xreg for now, then see how I can add those in
+
+mod.bsb.fit<-mod.bsb.join%>%
+  mutate(
+    params = map(data, ~ list(x=.x)),
+    fitted = invoke_map(model, params)
+
+  )
+
+names(mod.bsb.fit$fitted)<-mod.bsb.join$state
 ```
 
