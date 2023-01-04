@@ -1,0 +1,67 @@
+---
+title: "census data"
+output: html_document
+date: "2023-01-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse, tidycensus, censusapi)
+```
+
+```{r}
+census_api_key("ae3ac86d96823ec1d840420b565a3911a5b22141", install=T)
+
+pop<-get_estimates(geography="state", product="population", time_series=T)
+
+```
+
+tidycensus only goes back to 2015. boo. but it's not clear which year goes with which 'date'?
+
+use censusapi instead
+
+```{r}
+Sys.setenv(CENSUS_KEY="ae3ac86d96823ec1d840420b565a3911a5b22141")
+
+apis<-listCensusApis()
+
+metadata<-listCensusMetadata(name="pep/population")
+View(metadata)
+
+pop<-getCensus("acs/acs1/spp", vars="NAME")
+
+```
+
+Instead got state population estimates from 1990-2020 (mostly) through census.gov. 
+
+```{r}
+pop.00.19<-read_csv(here::here("census population data","midatlantic_2000_2019.csv"))
+pop.00.19$state<-str_replace(pop.00.19$state, "\\.", "")
+
+pop.90.99<-read_csv(here::here("census population data","midatlantic_1990_1999.csv"))
+
+pop.80.89<-read_csv(here::here("census population data","midatlantic_1980_1989.csv"))
+
+pop.since.90<-left_join(pop.90.99, pop.00.19, by="state")
+pop.since.80<-left_join(pop.80.89, pop.since.90, by="state")
+
+# pivot long
+
+pop.long<-pop.since.80%>%
+  pivot_longer(!state, names_to="year", values_to="population")
+
+ggplot(pop.long)+
+  geom_line(aes(x=as.numeric(year), y=population, color=state))
+
+write.csv(pop.long, here::here("census population data","census.population.est.state.year.csv"))
+```
+
+now deal with the monster from the 80s
+
+```{r}
+pop.80s<-read_csv(here::here("census population data","population_1980s.csv"))
+
+pop.80s.f<-pop.80s%>%
+  filter(`Area Name`%in%pop.long$state & !is.na(`Area Name`))
+```
+

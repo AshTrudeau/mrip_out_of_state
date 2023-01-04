@@ -1,0 +1,87 @@
+---
+title: "directed effort model fits"
+output: html_document
+date: "2022-12-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, imputeTS, lme4, MuMIn, car, DHARMa, TSA, forecast, tscount, nlme, cowplot, readxl)
+
+```
+
+
+```{r}
+bsb.1<-read_excel(here::here("directed effort","DT_Output_1981_2003_BLACKSEABASS.xls"))
+bsb.2<-read_excel(here::here("directed effort","DT_Output_2004_2020_BLACKSEABASS.xls"))
+bsb.effort<-rbind.data.frame(bsb.1, bsb.2)
+
+smf.1<-read_excel(here::here("directed effort","DT_Output_1981_2003_SUMMERFLOUNDER.xls"))
+smf.2<-read_excel(here::here("directed effort","DT_Output_2004_2020_SUMMERFLOUNDER.xls"))
+smf.effort<-rbind.data.frame(smf.1, smf.2)
+
+scup.1<-read_excel(here::here("directed effort","DT_Output_1981_2003_SCUP.xls"))
+scup.2<-read_excel(here::here("directed effort","DT_Output_2004_2020_SCUP.xls"))
+scup.effort<-rbind.data.frame(scup.1, scup.2)
+
+
+short.states<-tolower(c("Massachusetts","Connecticut","Rhode Island","New York","New Jersey","Delaware","Maryland","Virginia","North Carolina"))
+
+all.species<-rbind.data.frame(bsb.effort, smf.effort, scup.effort)
+
+effort<-all.species%>%
+  mutate(state=tolower(st_name))%>%
+  filter(state%in%short.states)%>%
+  select(YEAR, state, COMMON_NAME, dir_tot, pse_dt)%>%
+  mutate(se=dir_tot*(pse_dt/100),
+         CI.upper=dir_tot+1.96*se,
+         CI.lower=dir_tot-1.96*se,
+         nTrips=dir_tot,
+         common_name=COMMON_NAME,
+         year=YEAR)
+
+
+
+effort.bsb<-filter(effort, common_name=="BLACK SEA BASS")
+effort.smf<-filter(effort, common_name=="SUMMER FLOUNDER")
+effort.scup<-filter(effort, common_name=="SCUP")
+
+palette<-brewer.pal(8, "Dark2")
+
+palette<-c(palette, "#000000")
+
+
+
+
+ggplot(effort.bsb)+
+  geom_line(aes(x=year, y=nTrips, color=state))+
+  geom_point(aes(x=year, y=nTrips, color=state))+
+  geom_errorbar(aes(x=year, ymin=CI.lower, ymax=CI.upper), color="gray")+
+  scale_color_manual(values=palette)+
+  ggtitle("Black sea bass")+
+  facet_grid(state~.)+
+  theme_classic()
+ggsave(here::here("figures","fes.effort.bsb.png"), height=12, width=6)
+
+ggplot(effort.smf)+
+  geom_line(aes(x=year, y=nTrips, color=state))+
+  geom_point(aes(x=year, y=nTrips, color=state))+
+  geom_errorbar(aes(x=year, ymin=CI.lower, ymax=CI.upper), color="gray")+
+  scale_color_manual(values=palette)+
+  ggtitle("Summer flounder")+
+  facet_grid(state~.)+
+  theme_classic()
+ggsave(here::here("figures","fes.effort.smf.png"), height=12, width=6)
+
+ggplot(effort.scup)+
+  geom_line(aes(x=year, y=nTrips, color=state))+
+  geom_point(aes(x=year, y=nTrips, color=state))+
+  geom_errorbar(aes(x=year, ymin=CI.lower, ymax=CI.upper), color="gray")+
+  scale_color_manual(values=palette)+
+  ggtitle("Scup")+
+  facet_grid(state~.)+
+  theme_classic()
+ggsave(here::here("figures","fes.effort.scup.png"), height=12, width=6)
+
+
+```

@@ -1,0 +1,95 @@
+---
+title: "directed effort"
+output: html_document
+date: "2022-11-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, imputeTS, lme4, MuMIn, car, DHARMa, TSA, forecast, tscount, nlme, cowplot, readxl)
+```
+wait, it's not in federal waters. I'll do some exploration, but I'll need to ask for federal waters estimates to make this direct comparison. 
+I've reached out to Lucas again to either debug the custom data query or (maybe, if he's feeling nice) run the series in house. 
+
+Meanwhile, quick look at trends in directed trip effort. (though this also includes people catching these species incidentally)
+
+```{r}
+bsb.1<-read_excel(here::here("directed effort","DT_Output_1981_2003_BLACKSEABASS.xls"))
+bsb.2<-read_excel(here::here("directed effort","DT_Output_2004_2020_BLACKSEABASS.xls"))
+bsb.effort<-rbind.data.frame(bsb.1, bsb.2)
+
+smf.1<-read_excel(here::here("directed effort","DT_Output_1981_2003_SUMMERFLOUNDER.xls"))
+smf.2<-read_excel(here::here("directed effort","DT_Output_2004_2020_SUMMERFLOUNDER.xls"))
+smf.effort<-rbind.data.frame(smf.1, smf.2)
+
+scup.1<-read_excel(here::here("directed effort","DT_Output_1981_2003_SCUP.xls"))
+scup.2<-read_excel(here::here("directed effort","DT_Output_2004_2020_SCUP.xls"))
+scup.effort<-rbind.data.frame(scup.1, scup.2)
+
+
+short.states<-tolower(c("Massachusetts","Connecticut","Rhode Island","New York","New Jersey","Delaware","Maryland","Virginia","North Carolina"))
+
+all.species<-rbind.data.frame(bsb.effort, smf.effort, scup.effort)
+
+effort<-all.species%>%
+  mutate(state=tolower(st_name))%>%
+  filter(state%in%short.states)%>%
+  select(YEAR, state, COMMON_NAME, dir_tot, pse_dt)%>%
+  mutate(se=dir_tot*(pse_dt/100),
+         upper_95=dir_tot+1.96*se,
+         lower_95=dir_tot-1.96*se)
+
+names(effort)<-tolower(names(effort))
+```
+
+plot effort by state and species
+
+```{r}
+palette<-brewer.pal(length(short.states), "Paired")
+
+ggplot(effort)+
+  geom_line(aes(x=year, y=dir_tot, color=state))+
+  facet_grid(common_name~., scales="free_y")+
+  scale_color_manual(values=palette)+
+  ylab("Directed effort (trips)")+
+  theme_classic()
+ggsave(here::here("figures","directed.effort.png"), height=12, width=8)
+
+```
+
+
+
+
+what about trends in effort by area and mode? 
+
+```{r}
+effort.area.mode<-read_csv(here::here("data","mrip_effort_area_mode.csv"), skip=24)
+
+effort.area<-effort.area.mode%>%
+  filter(tolower(State)%in%short.states)%>%
+  group_by(Year, State, `Fishing Area`)%>%
+  summarize(nTrips=sum(`Angler Trips`, na.rm=T))
+
+effort.mode<-effort.area.mode%>%
+  filter(tolower(State)%in%short.states)%>%
+  group_by(Year, State, `Fishing Mode`)%>%
+  summarize(nTrips=sum(`Angler Trips`, na.rm=T))
+```
+
+```{r}
+ggplot(effort.area)+
+  geom_line(aes(x=Year, y=nTrips, color=State))+
+  facet_grid(`Fishing Area`~., scales="free_y")+
+  scale_color_manual(values=palette)+
+  theme_classic()
+ggsave(here::here("figures","effort.area.png"), height=12, width=8)
+```
+```{r}
+ggplot(effort.mode)+
+  geom_line(aes(x=Year, y=nTrips, color=State))+
+  facet_grid(`Fishing Mode`~., scales="free_y")+
+  scale_color_manual(values=palette)+
+  theme_classic()
+ggsave(here::here("figures","effort.mode.png"), height=16, width=8)
+```
+

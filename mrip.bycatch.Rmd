@@ -1,0 +1,55 @@
+---
+title: "MRIP bycatch"
+output: html_document
+date: "2023-01-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize)
+```
+
+MRIP raw trip data from here: https://www.st.nmfs.noaa.gov/st1/recreational/MRIP_Survey_Data/CSV/
+
+```{r}
+
+
+
+tbl<-list.files(path=here::here("data", "mrip raw"), pattern="catch*")
+
+setwd(here::here("data","mrip raw"))
+data<-sapply(tbl, read_csv, simplify=F)
+
+
+setwd("C:/Users/ashle/Dropbox/MRIP out of state/mrip_out_of_state")
+
+for(i in 1:length(data)){
+   names(data[[i]])<-tolower(names(data[[i]]))
+ 
+}
+
+
+#all.data<-do.call("rbind", data)
+
+ rbind.all.columns <- function(x, y) {
+  
+     x.diff <- setdiff(colnames(x), colnames(y))
+     y.diff <- setdiff(colnames(y), colnames(x))
+  
+     x[, c(as.character(y.diff))] <- NA
+  
+     y[, c(as.character(x.diff))] <- NA
+  
+     return(rbind(x, y))
+ }
+```
+ 
+ 
+ 
+```{r} 
+ 
+all.data <- Reduce( rbind.all.columns, data)
+
+write.csv(all.data, here::here("summary output", "all.catch.data.csv"))
+```
+

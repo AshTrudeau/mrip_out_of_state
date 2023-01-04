@@ -6,7 +6,7 @@ date: "2022-11-01"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, imputeTS, lme4, MuMIn, car, DHARMa, TSA, forecast, tscount, nlme)
+pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, imputeTS, lme4, MuMIn, car, DHARMa, TSA, forecast, tscount, nlme, cowplot)
 
 ```
 
@@ -109,7 +109,11 @@ palette<-brewer.pal(length(unique(mod.df$state)), "Paired")
 ggplot(mod.df)+
   geom_line(aes(x=year, y=nTrips, color=state))+
   scale_color_manual(values=palette)+
+  geom_vline(xintercept=1993)+
+  geom_vline(xintercept=1997)+
+  geom_vline(xintercept=1998)+
   theme_classic()
+ggsave(here::here("figures","state.effort.png"))
 ```
 ```{r}
 ggplot(mod.df)+
@@ -146,6 +150,29 @@ library(cowplot)
 plot_grid(bsb, smf, scup, nrow=3)
 ggsave(here::here("figures","stock.ssb.png"), height=12, width=6)
 
+```
+
+```{r}
+bsb.days<-ggplot(mod.df)+
+  geom_line(aes(x=year, y=bsb.season, color=state))+
+  scale_color_manual(values=palette)+
+  ggtitle("Black sea bass")+
+  theme_classic()
+
+ smf.days<-ggplot(mod.df)+
+  geom_line(aes(x=year, y=smf.season, color=state))+
+  scale_color_manual(values=palette)+
+  ggtitle("Summer flounder")+
+  theme_classic()
+
+scup.days<-ggplot(mod.df)+
+  geom_line(aes(x=year, y=scup.season, color=state))+
+  scale_color_manual(values=palette)+
+  ggtitle("Scup")+
+  theme_classic()
+
+ plot_grid(bsb.days, smf.days, scup.days, ncol=1)
+ ggsave(here::here("figures","season.length.png"), height=12, width=6)
 ```
 
 
@@ -522,6 +549,7 @@ mod.bsb.fit<-mod.bsb.join%>%
 
 names(mod.bsb.fit$fitted)<-mod.bsb.join$state
 
+mod.bsb.fit$fitted
 bsb.ct<-mod.bsb.fit$fitted$connecticut
 acf(bsb.ct$residuals)
 ```
@@ -698,50 +726,46 @@ huh, lots of these are ARIMA (0,0,0).
 Try adding season length
 
 ```{r}
-mod.ssb.nest<-mod.df.sc%>%
+mod.daysOpen.nest<-mod.df.sc%>%
   group_by(state)%>%
   nest(.key="data")
 
 # new auto_arima function that adds xreg? 
 
-auto_arima_ssb<-function(df){
-  xreg.ssb<-cbind(nRainyDays=as.numeric(df$nRain.sc),
-                  bsb.ssb=as.numeric(df$bsb.ssb.sc),
-                  smf.ssb=as.numeric(df$smf.ssb.sc),
-                  scup.ssb=as.numeric(df$scup.ssb.sc),
+auto_arima_daysOpen<-function(df){
+  xreg.daysOpen<-cbind(nRainyDays=as.numeric(df$nRain.sc),
                   bsb.daysOpen=as.numeric(df$bsb.daysOpen.sc),
                   smf.daysOpen=as.numeric(df$smf.daysOpen.sc),
                   scup.daysOpen=as.numeric(df$scup.daysOpen.sc))
-  
-  fit<-auto.arima(df$logTrips, xreg=xreg.ssb, seasonal=F)
+  fit<-auto.arima(df$logTrips, xreg=xreg.daysOpen, seasonal=F)
   return(fit)
 }
 
 # leaving room to add in other models if necessary
 model<-list(
-  auto_arima = function(x) auto_arima_ssb(x))
+  auto_arima = function(x) auto_arima_daysOpen(x))
 
 model%<>%
-  rep(length(unique(mod.ssb.nest$state)))%>%
+  rep(length(unique(mod.daysOpen.nest$state)))%>%
   enframe("model_name","model")%>%
-  mutate(state=sort(rep(unique(mod.ssb.nest$state, length(unique(.$model_name))))))
+  mutate(state=sort(rep(unique(mod.daysOpen.nest$state, length(unique(.$model_name))))))
 
 
-mod.ssb.join<-mod.ssb.nest%>%
+mod.daysOpen.join<-mod.daysOpen.nest%>%
   left_join(model)
 
 # doing it without xreg for now, then see how I can add those in
 
-mod.ssb.fit<-mod.ssb.join%>%
+mod.daysOpen.fit<-mod.daysOpen.join%>%
   mutate(
     params = map(data, ~ list(x=.x)),
     fitted = invoke_map(model, params)
 
   )
 
-names(mod.ssb.fit$fitted)<-mod.ssb.join$state
+names(mod.daysOpen.fit$fitted)<-mod.daysOpen.join$state
 
-mod.ssb.fit$fitted
+mod.daysOpen.fit$fitted
 
 
 
@@ -773,3 +797,6 @@ RI is confusing.sort of on a negative trend anyway. (though i did see a blog abo
 Are anglers from different states showing different willingness to switch target species? that could be an interesting question to get into. May depend on state's history of regulations. suddenly a species that is not regulated heavily appears in waters. Didn't see evidence of regulatory spiral in NJ because it's happening at a larger spatial scale? Just a hypothesis, but look into it. 
 
 Maybe if I look again at movement among states I can find some possible explanations
+
+
+
