@@ -118,6 +118,7 @@ focal<-c("SUMMER FLOUNDER","BLACK SEA BASS","SCUP")
 
 # estimating catch rates for focal species among trips where they were *not* specifically targeted. 
 
+# non-targeted catch
 catch.trip.f<-catch.trip%>%
   mutate(st=as.numeric(st))%>%
   filter(st%in%fips$st)%>%
@@ -125,7 +126,7 @@ catch.trip.f<-catch.trip%>%
   left_join(fips, by="st")
 ```
 
-Estimate catch rates of black sea bass, scup, and summer flounder in each state and year. 
+Estimate catch rates of black sea bass, scup, and summer flounder in each state and year on nontargeted trips. (bycatch cpue)
 
 Keeping all modes together for now, calculating weighted mean CPUE by year and species from catch data. First step is weighted catch (data.sum below), then dividing by sum of weights across strata
 
@@ -292,6 +293,7 @@ Now bind those dfs together, calculate CPUE
 ```{r}
 data.bind.total<-left_join(data.sum.annual.total, weight.sum.annual.total[,c("year","stusps","common","sumWeight3")], by=c("year","stusps","common"))
 
+
 data.bind.total$cpue<-data.bind.total$sumCatch3/data.bind.total$sumWeight3
 data.bind.total$year<-as.numeric(data.bind.total$year)
 
@@ -314,6 +316,17 @@ ggplot(data.bind.total)+
   theme_bw()
 ggsave(here::here("figures","total.cpue.png"), height=12, width=4)
 ```
+Add total cpue to to bycatch cpue and rhl df
+
+```{r}
+bycatch.cpue$cpueBycatch<-bycatch.cpue$cpue
+bycatch.cpue$rhl<-bycatch.cpue$`quota (millions of pounds)`
+data.bind.total$cpueTotal<-data.bind.total$cpue
+
+all.cpue.est<-left_join(data.bind.total[,c("year","common","stusps","cpueTotal")], bycatch.cpue[,c("year","common","stusps","cpueBycatch","rhl")], 
+                        by=c("year","common","stusps"))
+```
+
 
 And last target cpue
 
@@ -406,8 +419,14 @@ ggsave(here::here("figures","target.cpue.png"), height=12, width=4)
 
 Visually, it looks to me like targeted cpue goes down after implementation of RHLs (not very surprising), but bycatch cpue stays about the same. 
 
+```{r}
+data.bind.target$cpueTarget<-data.bind.target$cpue
 
-Ok, the problem is that I need directed fishing effort by year and state for all species that are not summer flounder, black sea bass, or scup. I have a request in for directed effort towards these three species. I can subtract that effort from total effort (i believe) to estimate total bycatch and its relationship to rhl. 
+all.cpue<-left_join(all.cpue.est, data.bind.target[,c("year","common","stusps","cpueTarget")], by=c("year","common","stusps"))
+```
+
+
+Ok, the problem is that I need directed fishing effort by year and state for all species that are not summer flounder, black sea bass, or scup. I have a request in for directed effort towards these three species. I can subtract that effort from total effort to estimate total bycatch and its relationship to rhl. 
 
 as of 6/15 I now have that data. (previous problems with estimates--identical estimates for each species)
 
@@ -539,33 +558,404 @@ total.effort<-read_csv(here::here("data","mrip estimates","fed_eez_mrip_effort_s
                       "MARYLAND"="MD",
                       "VIRGINIA"="VA",
                       "NORTH CAROLINA"="NC"))%>%
-  filter(state%in%c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC"))%>%
-  group_by(year, state)%>%
-  summarize(nTripsTotal=sum(nTrips, na.rm=T),
-            nTripsTotal.se=sqrt(sum(nTrips.se^2)))%>%
-  left_join(directed.bsb[,c("year","state","nTrips.bsb")], by=c("year","state"))%>%
-  left_join(directed.smf[,c("year","state","nTrips.smf")], by=c("year","state"))%>%
-  left_join(directed.scup[,c("year","state","nTrips.scup")], by=c("year","state"))%>%
-  mutate(nTrips.bsb=ifelse(is.na(nTrips.bsb), 0, nTrips.bsb),
-         nTrips.smf=ifelse(is.na(nTrips.smf), 0, nTrips.smf),
-         nTrips.scup=ifelse(is.na(nTrips.scup), 0, nTrips.scup),
-         # now make columns of all trips *except* bsb, smf, scup (effort where bycatch could have happened)
+  filter(state%in%c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC"))
 
-         nTrips.no.bsb=nTripsTotal-nTrips.bsb,
-         nTrips.no.smf=nTripsTotal-nTrips.smf,
-         nTrips.no.scup=nTripsTotal-nTrips.scup,
+
+# join total effort to directed effort (total effort estimates will repeat--joining by year and state (not species))
+
+directed.total<-left_join(directed.all, total.effort[,c("year","state","nTrips")], by=c("year","state"))%>%
+  mutate(nonDirectedEffort=nTrips-directedEffort)
+
+# now join effort tp cpue df
+
+all.cpue$species<-all.cpue$common
+all.cpue$state<-all.cpue$stusps
+
+all.cpue.effort<-left_join(all.cpue, directed.total, by=c("year","state","species"))%>%
+  mutate(catchTotal=cpueTotal*nTrips,
+         catchDirected=cpueTarget*directedEffort,
+         catchBycatch=cpueBycatch*nonDirectedEffort,
          state=factor(state, levels=c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC")))
-  
-  # no more negatives, yay. 
-  
-  
-ggplot(total.effort)+
-    geom_line(aes(x=year, y=nTrips.no.smf), color="#56B4E9")+
-  geom_line(aes(x=year, y=nTrips.no.bsb), color="#000000")+
-  geom_line(aes(x=year, y=nTrips.no.scup), color="#E69F00")+
+
+```
+
+Time for graphs
+
+```{r}
+# summer flounder first
+
+ggplot(filter(all.cpue.effort, species=="SUMMER FLOUNDER"))+
+  geom_line(aes(x=year, y=catchTotal), linetype="dotted")+
+  geom_line(aes(x=year, y=catchDirected), linetype="dashed")+
+  geom_line(aes(x=year, y=catchBycatch))+
   facet_grid(state~.)+
   theme_bw()
+
 ```
+
+```{r}
+ggplot(filter(all.cpue.effort, species=="BLACK SEA BASS"))+
+  geom_line(aes(x=year, y=catchTotal), linetype="dotted")+
+  geom_line(aes(x=year, y=catchDirected), linetype="dashed")+
+  geom_line(aes(x=year, y=catchBycatch))+
+  facet_grid(state~.)+
+  theme_bw()
+
+```
+Bycatch is higher than directed catch in NJ at least. hard to tell in other states.
+
+```{r}
+ggplot(filter(all.cpue.effort, species=="SCUP"))+
+  geom_line(aes(x=year, y=catchTotal), linetype="dotted")+
+  geom_line(aes(x=year, y=catchDirected), linetype="dashed")+
+  geom_line(aes(x=year, y=catchBycatch))+
+  facet_grid(state~.)+
+  theme_bw()
+
+
+```
+
+Response of fishing effort to RHL? 
+
+```{r}
+ggplot(all.cpue.effort)+
+  geom_point(aes(x=rhl, y=nTrips, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  theme_bw()
+
+# aggregate across states
+
+effort.agg<-all.cpue.effort%>%
+  filter(year<2019)%>%
+  group_by(year, species)%>%
+  summarize(rhl=unique(rhl),
+            nTrips=sum(nTrips, na.rm=T),
+            directedTrips=sum(directedEffort, na.rm=T),
+            nonDirectedTrips=sum(nonDirectedEffort, na.rm=T))%>%
+  ungroup()
+
+total.effort<-ggplot(effort.agg)+
+  geom_point(aes(x=rhl, y=nTrips, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  xlab("Recreational harvest limit")+
+  ylab("Annual total fishing trips")+
+  theme_bw()+
+  theme(legend.position="none")
+
+```
+Fairly clear relationship between total effort and black sea bass RHL. (which is not reflected in directed effort! weird.)
+
+Directed effort in theory shoudl be clearer
+
+```{r}
+directed.effort<-ggplot(effort.agg)+
+  geom_point(aes(x=rhl, y=directedTrips, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  xlab("Recreational harvest limit")+
+  ylab("Annual directed fishing trips")+
+  theme_bw()+
+  theme(legend.position="none")
+
+
+```
+Weird, it's not very. Scup has the clearest relationship, bsb and smf are just blobs. 
+
+species specific linear regressions
+
+```{r}
+smf.effort<-lm(log(directedTrips)~rhl, filter(effort.agg, species=="SUMMER FLOUNDER"))
+summary(smf.effort)
+```
+
+```{r}
+bsb.effort<-lm(log(directedTrips)~rhl, filter(effort.agg, species=="BLACK SEA BASS"))
+summary(bsb.effort)
+
+```
+```{r}
+scup.effort<-lm(log(directedTrips)~rhl, filter(effort.agg, species=="SCUP"))
+summary(scup.effort)
+
+```
+No significant relationships between directed effort and rhl for specific species
+
+Non-directed effort--in theory it would go up as anglers switch to other species at low RHL
+
+Test this: 
+
+```{r}
+effort.mod<-lm(directedTrips~nTrips+rhl+nTrips*rhl, filter(effort.agg, species=="SCUP"))
+plot(effort.mod)
+summary(effort.mod)
+```
+No, doesn't really hold up. 
+
+```{r}
+effort.mod.red<-lm(directedTrips~nTrips+rhl, filter(effort.agg, species=="SCUP"))
+plot(effort.mod.red)
+summary(effort.mod.red)
+```
+
+
+```{r}
+nondirected.effort<-ggplot(effort.agg)+
+  geom_point(aes(x=rhl, y=nonDirectedTrips, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  xlab("Recreational harvest limit")+
+  ylab("Annual non-directed effort")+
+  theme_bw()
+legend<-get_legend(nondirected.effort)
+
+nondirected.effort<-ggplot(effort.agg)+
+  geom_point(aes(x=rhl, y=nonDirectedTrips, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  xlab("Recreational harvest limit")+
+  ylab("Annual non-directed effort")+
+  theme_bw()+
+  theme(legend.position="none")
+
+```
+
+```{r}
+library(cowplot)
+plot_grid(total.effort, directed.effort, nondirected.effort, legend, rel_widths=c(3,3,3,1),nrow=1)
+ggsave(here::here("figures","effort.vs.rhl.png"), height=4, width=12)
+
+```
+
+
+Now aggregate bycatch and investigate relationship with RHL
+
+Replace NA RHL with 99? 
+
+```{r}
+bycatch.agg<-all.cpue.effort%>%
+  filter(year<2020)%>%
+  group_by(year, species)%>%
+  summarize(catchBycatch=sum(catchBycatch, na.rm=T),
+            rhl=unique(rhl))%>%
+  ungroup()%>%
+  mutate(rhl=ifelse(is.na(rhl), 99, rhl))
+
+ggplot(bycatch.agg)+
+  geom_point(aes(x=rhl, y=catchBycatch, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  theme_bw()
+```
+Try taking out years without RHL
+
+```{r}
+bycatch<-ggplot(bycatch.agg)+
+  geom_point(aes(x=rhl, y=catchBycatch, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  xlim(0,15)+
+  xlab("Recreational harvest limit")+
+  ylab("Annual bycatch estimate")+
+  theme_bw()+
+  theme(legend.position="none")
+
+lm.species<-lm(log(catchBycatch)~rhl+species, filter(bycatch.agg, !is.na(rhl)))
+plot(lm.species)
+summary(lm.species)
+
+```
+If there's a pattern there, it's really noisy. Bycatch as proportion of total catch?
+
+```{r}
+bycatch.prop<-all.cpue.effort%>%
+  filter(year<2020)%>%
+  group_by(year, species)%>%
+  summarize(catchBycatch.agg=sum(catchBycatch, na.rm=T),
+            catchTotal.agg=sum(catchTotal, na.rm=T),
+            rhl=unique(rhl))%>%
+  ungroup()%>%
+  mutate(propBycatch=catchBycatch.agg/catchTotal.agg)
+
+ggplot(bycatch.prop)+
+  geom_point(aes(x=rhl, y=propBycatch, color=species))+
+ # xlim(0,15)+
+  scale_color_manual(values=cbbPalette)+
+  theme_bw()
+ggsave(here::here("figures","prop.bycatch.vs.rhl.png"), height=12, width=6)
+
+```
+
+```{r}
+lm.rhl.smf<-lm(log(catchBycatch)~rhl, filter(all.cpue.effort, species=='SUMMER FLOUNDER' & !is.na(rhl)))
+plot(lm.rhl.smf)
+summary(lm.rhl.smf)
+```
+```{r}
+lm.rhl.bsb<-lm(log(catchBycatch)~rhl, filter(all.cpue.effort, species=='BLACK SEA BASS' & !is.na(rhl)))
+plot(lm.rhl.bsb)
+summary(lm.rhl.bsb)
+
+```
+```{r}
+lm.rhl.scup<-lm(log(catchBycatch)~rhl, filter(all.cpue.effort, species=='SCUP' & !is.na(rhl)))
+plot(lm.rhl.scup)
+summary(lm.rhl.scup)
+
+```
+OK, when we look at all species together, species/year combinations with lower RHLs have higher bycatch. But separated by species, don't see the same pattern. For summer flounder, a small positive effect of RHL on bycatch (so lower RHL associated with lower bycatch)
+
+What about by proportion of total catch? 
+
+```{r}
+lm.prop.smf<-lm(propBycatch~rhl, filter(bycatch.prop, species=="SUMMER FLOUNDER" & !is.na(rhl)))
+plot(lm.prop.smf)
+summary(lm.prop.smf)
+```
+```{r}
+lm.prop.bsb<-lm(propBycatch~rhl, filter(bycatch.prop, species=="BLACK SEA BASS" & !is.na(rhl)))
+plot(lm.prop.bsb)
+summary(lm.prop.bsb)
+
+```
+```{r}
+lm.prop.scup<-lm(propBycatch~rhl, filter(bycatch.prop, species=="SCUP" & !is.na(rhl)))
+plot(lm.prop.scup)
+summary(lm.prop.scup)
+
+```
+What if I don't aggregate by state? (state random effect?)
+
+```{r}
+ggplot(filter(all.cpue.effort, !is.na(rhl)))+
+  geom_point(aes(x=rhl, y=catchBycatch, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  theme_bw()
+
+library(lme4)
+
+m.mod<-lmer(log(catchBycatch)~rhl +  (species|state), filter(all.cpue.effort, !is.na(rhl)))
+plot(resid(m.mod))
+qqnorm(resid(m.mod))
+summary(m.mod)
+
+```
+
+
+Plotting total and directed catch
+
+```{r}
+catch.agg<-all.cpue.effort%>%
+  filter(year<2020)%>%
+  group_by(year, species)%>%
+  summarize(catchBycatch=sum(catchBycatch, na.rm=T),
+            catchTotal=sum(catchTotal, na.rm=T),
+            catchDirected=sum(catchDirected, na.rm=T),
+            rhl=unique(rhl))%>%
+  ungroup()%>%
+  mutate(rhl=ifelse(is.na(rhl), 99, rhl))
+
+bycatch<-ggplot(catch.agg)+
+  geom_point(aes(x=rhl, y=catchBycatch, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  xlim(0,15)+
+  xlab("Recreational harvest limit")+
+  ylab("Annual bycatch estimate")+
+  theme_bw()+
+  theme(legend.position="none")
+
+directed<-ggplot(catch.agg)+
+  geom_point(aes(x=rhl, y=catchDirected, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  xlim(0,15)+
+  xlab("Recreational harvest limit")+
+  ylab("Annual directed catch estimate")+
+  theme_bw()+
+  theme(legend.position="none")
+
+total<-ggplot(catch.agg)+
+  geom_point(aes(x=rhl, y=catchTotal, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  xlim(0,15)+
+  xlab("Recreational harvest limit")+
+  ylab("Annual total catch estimate")+
+  theme_bw()+
+  theme(legend.position="none")
+
+plot_grid(total, directed, bycatch, legend, nrow=1, rel_widths=c(3,3,3,1))
+ggsave(here::here("figures","catch.vs.rhl.png"), height=4, width=12)
+```
+time series
+```{r}
+ggplot(filter(all.cpue.effort, year<2020))+
+  geom_line(aes(x=year, y=catchBycatch, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  facet_grid(state~.)+
+  ylab("Annual bycatch estimate")+
+  geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+  geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+  geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  theme_bw()
+ggsave(here::here("figures","bycatch.estimate.png"), height=12, width=6)
+  
+
+```
+
+Divide instead by pre/post RHL? 
+
+```{r}
+all.cpue.rhl.agg<-all.cpue.effort%>%
+  filter(year<2020)%>%
+  mutate(rhl.ind=ifelse(is.na(rhl), 0, 1),
+         rhl.ind=as.factor(rhl.ind))
+
+ggplot(all.cpue.rhl.agg)+
+  geom_boxplot(aes(x=rhl.ind, y=directedEffort))+
+  facet_grid(species~.)+
+  theme_bw()
+ggsave(here::here("figures","boxplot.directed.effort.rhl.png"), height=12, width=6)
+
+ggplot(all.cpue.rhl.agg)+
+  geom_boxplot(aes(x=rhl.ind, y=catchBycatch))+
+  facet_grid(species~.)+
+  theme_bw()
+ggsave(here::here("figures","boxplot.bycatch.rhl.png"), height=12, width=6)
+```
+eh, no obvious change
+
+```{r}
+data.to.send<-all.cpue.effort%>%
+  select(!c(stusps.x, stusps.y))
+
+write.csv(data.to.send, here::here("summary output","catch.and.effort.estimates.MRIP.csv"))
+```
+
+aggregating all states
+
+```{r}
+agg.catch<-all.cpue.effort%>%
+  filter(year<2020)%>%
+  group_by(year, species)%>%
+  summarize(bycatch=sum(catchBycatch, na.rm=T),
+            rhl=unique(rhl))
+
+ggplot(agg.catch)+
+  geom_line(aes(x=year, y=bycatch, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+  geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+  geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  ylab("Annual bycatch estimate")+
+  theme_bw()
+ggsave(here::here("figures","aggregate.bycatch.png"), height=4, width=6)
+```
+
+
+Binning data before and after RHL
+
+```{r}
+ggplot(all.cpue.rhl.agg)+
+  geom_boxplot(aes(x=rhl.ind, y=cpueBycatch))+
+  facet_grid(species~.)+
+  theme_bw()
+
+```
+
+
 Some state/year combinations have non-estimates (represented as zero) for directed effort for these species. (out of typical range, so not enough data)
 
 Problem here is that total directed catch for all 3 species combined is sometimes higher than total catch for the state. I think this makes sense; multispecies trips happen. Therefore, keep it separated by species. 
