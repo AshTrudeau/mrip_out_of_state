@@ -6,50 +6,616 @@ date: "2023-01-04"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize)
+pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, wesanderson)
 ```
 
 MRIP raw trip data from here: https://www.st.nmfs.noaa.gov/st1/recreational/MRIP_Survey_Data/CSV/
 
+Skip this from now on, it's time consuming and I can just read it in. 
+```{r}
+
+ tbl<-list.files(path=here::here("data", "mrip raw"), pattern="catch*")
+ 
+ setwd(here::here("data","mrip raw"))
+ data<-sapply(tbl, read_csv, simplify=F, 
+              col_types = cols(.default="c"))
+ 
+ 
+ setwd("C:/Users/ashle/Dropbox/mrip_out_of_state")
+ 
+ for(i in 1:length(data)){
+    names(data[[i]])<-tolower(names(data[[i]]))
+  
+ }
+ 
+ cols.data<-rep(NA, length(data))
+ 
+ # different numbers of columns
+ for(i in 1:length(data)){
+   cols.data[i]<-ncol(data[[i]])
+ }
+ 
+
+  rbind.all.columns <- function(x, y) {
+   
+      x.diff <- setdiff(colnames(x), colnames(y))
+      y.diff <- setdiff(colnames(y), colnames(x))
+   
+      x[, c(as.character(y.diff))] <- NA
+   
+      y[, c(as.character(x.diff))] <- NA
+   
+      return(rbind(x, y))
+  }
+  
+  all.catch.data <- Reduce( rbind.all.columns, data)
+
+```
+ 
+ 
+ now trip data
+ 
+```{r}
+ tbl<-list.files(path=here::here("data", "mrip raw"), pattern="trip*")
+ 
+ setwd(here::here("data","mrip raw"))
+ data<-sapply(tbl, read_csv, simplify=F, 
+              col_types = cols(.default="c"))
+ 
+ 
+ setwd("C:/Users/ashle/Dropbox/mrip_out_of_state")
+ 
+ for(i in 1:length(data)){
+    names(data[[i]])<-tolower(names(data[[i]]))
+  
+ }
+ 
+
+
+  rbind.all.columns <- function(x, y) {
+   
+      x.diff <- setdiff(colnames(x), colnames(y))
+      y.diff <- setdiff(colnames(y), colnames(x))
+   
+      x[, c(as.character(y.diff))] <- NA
+   
+      y[, c(as.character(x.diff))] <- NA
+   
+      return(rbind(x, y))
+  }
+  
+  all.trip.data <- Reduce( rbind.all.columns, data)
+
+write.csv(all.catch.data, here::here("summary output","all.catch.data.csv"))
+write.csv(all.trip.data, here::here("summary output","all.trip.data.csv"))
+```
+ 
+ For when this data is ready to go (note that everything is saved as a character--will have to convert as needed)
+ 
+```{r} 
+all.catch.data<-read_csv(here::here("summary output","all.catch.data.csv"))
+all.trip.data<-read_csv(here::here("summary output","all.trip.data.csv"))
+```
+Join catch to trip data, filter to ME:NC
+Filter to all trips that did not target summer flounder, black sea bass, or scup. 
+
+Coming back to this later, make sure that all digits of PSU ID and ID code are being read in. 
+
+```{r}
+catch.trip<-left_join(all.trip.data[,c("id_code","prim1_common","prim2_common","psu_id")], all.catch.data, by=c("id_code", "psu_id"))
+
+# psu_id and id_code together identify individual interviews
+
+
+codes<-read_csv("mrip.codes.csv")%>%
+  filter(`common name`%in%c("fluke","scup","black sea bass"))
+fips<-read_csv(here::here("data","state.fips.csv"))%>%
+  filter(stname%in%c("Maine","New Hampshire","Massachusetts","Connecticut","Rhode Island","New York","New Jersey","Delaware","Maryland","Virginia","North Carolina"))
+
+'%!in%'<-Negate('%in%')
+
+focal<-c("SUMMER FLOUNDER","BLACK SEA BASS","SCUP")
+
+# estimating catch rates for focal species among trips where they were *not* specifically targeted. 
+
+catch.trip.f<-catch.trip%>%
+  mutate(st=as.numeric(st))%>%
+  filter(st%in%fips$st)%>%
+  filter(prim1_common%!in%focal & prim2_common%!in%focal)%>%
+  left_join(fips, by="st")
+```
+
+Estimate catch rates of black sea bass, scup, and summer flounder in each state and year. 
+
+Keeping all modes together for now, calculating weighted mean CPUE by year and species from catch data. First step is weighted catch (data.sum below), then dividing by sum of weights across strata
+
+```{r}
+data.sum.annual<-catch.trip.f%>%
+  mutate(wp_catch=as.numeric(wp_catch),
+         landing=as.numeric(landing),
+         release=as.numeric(release),
+         year=as.numeric(year))%>%
+  filter(common%in%focal)%>%
+  mutate(nfishWeight=wp_catch*(landing+release))%>%
+  group_by(strat_id, common)%>%
+  summarize(sumCatch=sum(nfishWeight),
+            year=unique(year),
+            wave=unique(wave),
+            stusps=unique(stusps),
+            psu_id=unique(psu_id))%>%
+  ungroup()%>%
+  group_by(strat_id, common)%>%
+  summarize(sumCatch2=sum(sumCatch),
+            year=unique(year),
+            stusps=unique(stusps))%>%
+  ungroup()%>%
+  group_by(year, common, stusps)%>%
+  summarize(sumCatch3=sum(sumCatch2))%>%
+  ungroup()
+
+ggplot(data.sum.annual)+
+  geom_line(aes(x=year, y=sumCatch3, color=common))+
+  facet_grid(stusps~.)
+```
+```{r}
+weight.sum.annual<-catch.trip.f%>%
+    mutate(wp_catch=as.numeric(wp_catch),
+         landing=as.numeric(landing),
+         release=as.numeric(release),
+         year=as.numeric(year),
+         wp_int=as.numeric(wp_int))%>%
+  filter(common%in%focal)%>%
+  mutate(weight=wp_int)%>%
+  group_by(strat_id, common)%>%
+  summarize(sumWeight=sum(weight),
+            year=unique(year),
+            wave=unique(wave),
+            stusps=unique(stusps),
+            psu_id=unique(psu_id))%>%
+  ungroup()%>%
+  group_by(strat_id, common)%>%
+  summarize(sumWeight2=sum(sumWeight),
+            year=unique(year),
+            stusps=unique(stusps))%>%
+  ungroup()%>%
+  group_by(year, common, stusps)%>%
+  summarize(sumWeight3=sum(sumWeight2))%>%
+  ungroup()
+```
+
+
+Now bind those dfs together, calculate CPUE
+```{r}
+data.bind<-left_join(data.sum.annual, weight.sum.annual[,c("year","stusps","common","sumWeight3")], by=c("year","stusps","common"))
+
+data.bind$cpue<-data.bind$sumCatch3/data.bind$sumWeight3
+
+data.bind$stusps<-factor(data.bind$stusps, levels=c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC"))
+```
+
+
+```{r}
+palette<-wes_palette("BottleRocket2",3,"discrete")
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9")
+
+ggplot(data.bind)+
+  geom_line(aes(x=year, y=cpue, color=common))+
+  geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+  geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+  geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  ggtitle("Bycatch cpue")+
+  scale_color_manual(values=cbbPalette)+
+  facet_grid(stusps~.)+
+  theme_bw()
+ggsave(here::here("figures","bycatch.cpue.png"), height=12, width=4)
+```
+Hypothesis: as RHL goes down (and regulations become more restrictive), bycatch of focal species goes up. 
+
+This is a catch rate, so to estimate total annual bycatch, I need nontargeted fishing effort. This can be total fishing effort (all species) - targeted fishing effort for these species. 
+
+
+```{r}
+rhl<-read_csv(here::here("state regs","rhl.csv"))%>%
+  mutate(species=tolower(species))
+
+bycatch.cpue<-data.bind%>%
+  mutate(species=tolower(common))%>%
+  left_join(rhl, by=c("species","year"))
+```
+
+
+I should remember to compare bycatch to targeted cpue
+
+So next few chunks are estimating total CPUE
+
 ```{r}
 
 
+catch.trip.total<-catch.trip%>%
+  filter(st%in%fips$st)%>%
+  mutate(st=as.numeric(st))%>%
+  # comparing bycatch cpue instead to total cpue to see if psu problems were caused by target species filtering
+  #filter(prim1_common%in%focal | prim2_common%in%focal)%>%
+  left_join(fips, by="st")
 
-tbl<-list.files(path=here::here("data", "mrip raw"), pattern="catch*")
-
-setwd(here::here("data","mrip raw"))
-data<-sapply(tbl, read_csv, simplify=F)
-
-
-setwd("C:/Users/ashle/Dropbox/MRIP out of state/mrip_out_of_state")
-
-for(i in 1:length(data)){
-   names(data[[i]])<-tolower(names(data[[i]]))
- 
-}
-
-
-#all.data<-do.call("rbind", data)
-
- rbind.all.columns <- function(x, y) {
+data.sum.annual.total<-catch.trip.total%>%
+  filter(common%in%focal)%>%
+  mutate(wp_catch=as.numeric(wp_catch),
+         landing=as.numeric(landing),
+         release=as.numeric(release))%>%
+  mutate(nfishWeight=wp_catch*(landing+release))%>%
+  group_by(strat_id, common)%>%
+  summarize(sumCatch=sum(nfishWeight),
+            year=unique(year),
+            wave=unique(wave),
+            stusps=unique(stusps),
+            psu_id=unique(psu_id))%>%
+  ungroup()%>%
+  group_by(strat_id, common)%>%
+  summarize(sumCatch2=sum(sumCatch),
+            year=unique(year),
+            stusps=unique(stusps))%>%
+  ungroup()%>%
+  group_by(year, common, stusps)%>%
+  summarize(sumCatch3=sum(sumCatch2))%>%
+  ungroup()
   
-     x.diff <- setdiff(colnames(x), colnames(y))
-     y.diff <- setdiff(colnames(y), colnames(x))
-  
-     x[, c(as.character(y.diff))] <- NA
-  
-     y[, c(as.character(x.diff))] <- NA
-  
-     return(rbind(x, y))
- }
-```
- 
- 
- 
-```{r} 
- 
-all.data <- Reduce( rbind.all.columns, data)
-
-write.csv(all.data, here::here("summary output", "all.catch.data.csv"))
+# ah, strat_id is a subset of psu, not the other way around. 
 ```
 
+
+
+```{r}
+weight.sum.annual.total<-catch.trip.total%>%
+  filter(common%in%focal)%>%
+  mutate(wp_int=as.numeric(wp_int))%>%
+  mutate(weight=wp_int)%>%
+  group_by(strat_id, common)%>%
+  summarize(sumWeight=sum(weight),
+            year=unique(year),
+            wave=unique(wave),
+            stusps=unique(stusps),
+            psu_id=unique(psu_id))%>%
+  ungroup()%>%
+  group_by(strat_id, common)%>%
+  summarize(sumWeight2=sum(sumWeight),
+            year=unique(year),
+            stusps=unique(stusps))%>%
+  ungroup()%>%
+  group_by(year, common, stusps)%>%
+  summarize(sumWeight3=sum(sumWeight2))%>%
+  ungroup()
+```
+
+
+Now bind those dfs together, calculate CPUE
+```{r}
+data.bind.total<-left_join(data.sum.annual.total, weight.sum.annual.total[,c("year","stusps","common","sumWeight3")], by=c("year","stusps","common"))
+
+data.bind.total$cpue<-data.bind.total$sumCatch3/data.bind.total$sumWeight3
+data.bind.total$year<-as.numeric(data.bind.total$year)
+
+data.bind.total$stusps<-factor(data.bind.total$stusps, levels=c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC"))
+
+
+```
+
+
+```{r}
+
+ggplot(data.bind.total)+
+  geom_line(aes(x=year, y=cpue, color=common))+
+   geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+   geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+   geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  ggtitle("Total cpue")+
+  scale_color_manual(values=cbbPalette)+
+  facet_grid(stusps~.)+
+  theme_bw()
+ggsave(here::here("figures","total.cpue.png"), height=12, width=4)
+```
+
+And last target cpue
+
+
+```{r}
+
+
+catch.trip.target<-catch.trip%>%
+  mutate(st=as.numeric(st))%>%
+  filter(st%in%fips$st)%>%
+  filter(prim1_common%in%focal | prim2_common%in%focal)%>%
+  left_join(fips, by="st")
+
+data.sum.annual.target<-catch.trip.target%>%
+  filter(common%in%focal)%>%
+  mutate(wp_catch=as.numeric(wp_catch),
+         landing=as.numeric(landing),
+         release=as.numeric(release))%>%
+  mutate(nfishWeight=wp_catch*(landing+release))%>%
+  group_by(strat_id, common)%>%
+  summarize(sumCatch=sum(nfishWeight),
+            year=unique(year),
+            wave=unique(wave),
+            stusps=unique(stusps),
+            psu_id=unique(psu_id))%>%
+  ungroup()%>%
+  group_by(strat_id, common)%>%
+  summarize(sumCatch2=sum(sumCatch),
+            year=unique(year),
+            stusps=unique(stusps))%>%
+  ungroup()%>%
+  group_by(year, common, stusps)%>%
+  summarize(sumCatch3=sum(sumCatch2))%>%
+  ungroup()
+  
+# ah, strat_id is a subset of psu, not the other way around. 
+```
+
+
+
+```{r}
+weight.sum.annual.target<-catch.trip.target%>%
+  filter(common%in%focal)%>%
+  mutate(weight=as.numeric(wp_int))%>%
+  group_by(strat_id, common)%>%
+  summarize(sumWeight=sum(weight),
+            year=unique(year),
+            wave=unique(wave),
+            stusps=unique(stusps),
+            psu_id=unique(psu_id))%>%
+  ungroup()%>%
+  group_by(strat_id, common)%>%
+  summarize(sumWeight2=sum(sumWeight),
+            year=unique(year),
+            stusps=unique(stusps))%>%
+  ungroup()%>%
+  group_by(year, common, stusps)%>%
+  summarize(sumWeight3=sum(sumWeight2))%>%
+  ungroup()
+```
+
+
+Now bind those dfs together, calculate CPUE
+```{r}
+data.bind.target<-left_join(data.sum.annual.target, weight.sum.annual.target[,c("year","stusps","common","sumWeight3")], by=c("year","stusps","common"))
+
+data.bind.target$cpue<-data.bind.target$sumCatch3/data.bind.target$sumWeight3
+
+data.bind.target$stusps<-factor(data.bind.target$stusps, levels=c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC"))
+
+data.bind.target$year<-as.numeric(data.bind.target$year)
+
+
+```
+
+
+```{r}
+
+ggplot(data.bind.target)+
+  geom_line(aes(x=year, y=cpue, color=common))+
+  geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+  geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+  geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  ggtitle("Target cpue")+
+  scale_color_manual(values=cbbPalette)+
+  facet_grid(stusps~.)+
+  theme_bw()
+ggsave(here::here("figures","target.cpue.png"), height=12, width=4)
+```
+
+Visually, it looks to me like targeted cpue goes down after implementation of RHLs (not very surprising), but bycatch cpue stays about the same. 
+
+
+Ok, the problem is that I need directed fishing effort by year and state for all species that are not summer flounder, black sea bass, or scup. I have a request in for directed effort towards these three species. I can subtract that effort from total effort (i believe) to estimate total bycatch and its relationship to rhl. 
+
+as of 6/15 I now have that data. (previous problems with estimates--identical estimates for each species)
+
+```{r}
+directed.bsb<-read_csv(here::here("directed effort","updated_estimates","BLACKSEABASS.csv"))%>%
+  mutate(species="BLACK SEA BASS")
+directed.scup<-read_csv(here::here("directed effort","updated_estimates","SCUP.csv"))%>%
+  mutate(species="SCUP")
+directed.smf<-read_csv(here::here("directed effort","updated_estimates","SUMMERFLOUNDER.csv"))%>%
+  mutate(species="SUMMER FLOUNDER")
+
+
+# codes for state, mode, area_x
+fips<-read_csv(here::here("data","state.fips.csv"))%>%
+  mutate(st=as.character(st))
+
+
+
+directed<-rbind.data.frame(directed.bsb, directed.scup, directed.smf)%>%
+  # problem: some one-digit FIP codes, so need to check for length of my_dom_id
+  mutate(my_dom_id=as.character(my_dom_id),
+         length=str_length(my_dom_id),
+         year=as.numeric(str_sub(my_dom_id,1,4)),
+         st=ifelse(length==7, str_sub(my_dom_id, 5,5),
+                      str_sub(my_dom_id, 5,6)),
+         mode=ifelse(length==7, str_sub(my_dom_id, 6,6),
+                     str_sub(my_dom_id, 7,7)),
+         area_x=ifelse(length==7, str_sub(my_dom_id, 7,7),
+                       str_sub(my_dom_id, 8,8)))%>%
+  mutate(mode=recode(mode,
+                         "3"="shore",
+                         "4"="forHire",
+                         "6"="forHire",
+                         "7"="privateBoat",
+                         "5"="forHire"
+                         ))%>%
+  mutate(area=recode(area_x, 
+                         "1"="stateWaters",
+                         "2"="federalWaters",
+                         "5"="inland",
+                         "3"="WFL_less_10",
+                         "4"="WFL_more_10"))%>%
+  left_join(fips, by="st")%>%
+  select(!c("Domain","Variable Name", "st", "area_x"))
+
+
+# totally aggregate in federal waters, separate only by year and state
+directed.agg<-directed%>%
+  filter(area=="federalWaters")%>%
+  group_by(year, species, stusps)%>%
+  summarize(directedEffort=sum(Sum),
+            directedEffort.se=sqrt(sum(VarSum)),
+            CV=directedEffort.se/directedEffort,
+            stname=unique(stname))%>%
+  ungroup()%>%
+  filter(stname%in%c("Maine","New Hampshire","Massachusetts","Connecticut","Rhode Island","New York","New Jersey","Delaware","Maryland","Virginia","North Carolina"))%>%
+  mutate(stusps=factor(stusps, levels=c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC")),
+         year=as.numeric(year))
+
+directed.agg.df<-as.data.frame(directed.agg)
+
+
+
+ggplot(directed.agg, aes(x=year, y=directedEffort, color=species, group=species))+
+  geom_line()+
+   geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+   geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+   geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  ggtitle("Directed effort")+
+  scale_color_manual(values=cbbPalette)+
+  facet_grid(stusps~.)+
+  theme_bw()
+ggsave(here::here("figures","directed.effort.png"), height=12, width=4)
+
+
+bsb<-filter(directed.agg, species=="BLACK SEA BASS")
+smf<-filter(directed.agg, species=="SUMMER FLOUNDER")
+scup<-filter(directed.agg, species=="SCUP")
+
+ggplot(scup, aes(x=year, y=directedEffort))+
+  geom_line(aes(color=stname))
+ggplot(bsb, aes(x=year, y=directedEffort))+
+  geom_line(aes(color=stname))
+ggplot(smf, aes(x=year, y=directedEffort))+
+  geom_line(aes(color=stname))
+
+```
+
+How did total catch of bsb, scup, summer flounder change in non-targeted trips?
+
+```{r}
+directed.all<-directed%>%
+  filter(area=="federalWaters")%>%
+  filter(stusps%in%c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC"))%>%
+  group_by(year, stusps, species)%>%
+  summarize(directedEffort=sum(Sum))%>%
+  ungroup()%>%
+  mutate(state=stusps)
+
+ggplot(directed.all)+
+  geom_line(aes(x=year, y=directedEffort, color=species))+
+  facet_grid(stusps~.)+
+  scale_color_manual(values=cbbPalette)+
+  theme_bw()
+
+directed.bsb<-filter(directed.all, species=="BLACK SEA BASS")%>%
+  rename("nTrips.bsb"=directedEffort)
+directed.smf<-filter(directed.all, species=="SUMMER FLOUNDER")%>%
+  rename("nTrips.smf"=directedEffort)
+directed.scup<-filter(directed.all, species=="SCUP")%>%
+  rename("nTrips.scup"=directedEffort)
+
+total.effort<-read_csv(here::here("data","mrip estimates","fed_eez_mrip_effort_series_modes_combined.csv"), skip=24)%>%
+  # replace '.' with NA
+  mutate(nTrips=as.numeric(na_if(`Angler Trips`,".")),
+         CV=as.numeric(na_if(`PSE`,"."))/100,
+         nTrips.se=CV*as.numeric(nTrips),
+         year=as.numeric(Year),
+         state=State,
+         state=recode(state, 
+                      "MAINE"="ME",
+                      "NEW HAMPSHIRE"="NH",
+                      "MASSACHUSETTS"="MA",
+                      "RHODE ISLAND"="RI",
+                      "CONNECTICUT"="CT",
+                      "NEW YORK"="NY",
+                      "NEW JERSEY"="NJ",
+                      "DELAWARE"="DE",
+                      "MARYLAND"="MD",
+                      "VIRGINIA"="VA",
+                      "NORTH CAROLINA"="NC"))%>%
+  filter(state%in%c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC"))%>%
+  group_by(year, state)%>%
+  summarize(nTripsTotal=sum(nTrips, na.rm=T),
+            nTripsTotal.se=sqrt(sum(nTrips.se^2)))%>%
+  left_join(directed.bsb[,c("year","state","nTrips.bsb")], by=c("year","state"))%>%
+  left_join(directed.smf[,c("year","state","nTrips.smf")], by=c("year","state"))%>%
+  left_join(directed.scup[,c("year","state","nTrips.scup")], by=c("year","state"))%>%
+  mutate(nTrips.bsb=ifelse(is.na(nTrips.bsb), 0, nTrips.bsb),
+         nTrips.smf=ifelse(is.na(nTrips.smf), 0, nTrips.smf),
+         nTrips.scup=ifelse(is.na(nTrips.scup), 0, nTrips.scup),
+         # now make columns of all trips *except* bsb, smf, scup (effort where bycatch could have happened)
+
+         nTrips.no.bsb=nTripsTotal-nTrips.bsb,
+         nTrips.no.smf=nTripsTotal-nTrips.smf,
+         nTrips.no.scup=nTripsTotal-nTrips.scup,
+         state=factor(state, levels=c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC")))
+  
+  # no more negatives, yay. 
+  
+  
+ggplot(total.effort)+
+    geom_line(aes(x=year, y=nTrips.no.smf), color="#56B4E9")+
+  geom_line(aes(x=year, y=nTrips.no.bsb), color="#000000")+
+  geom_line(aes(x=year, y=nTrips.no.scup), color="#E69F00")+
+  facet_grid(state~.)+
+  theme_bw()
+```
+Some state/year combinations have non-estimates (represented as zero) for directed effort for these species. (out of typical range, so not enough data)
+
+Problem here is that total directed catch for all 3 species combined is sometimes higher than total catch for the state. I think this makes sense; multispecies trips happen. Therefore, keep it separated by species. 
+
+
+join bycatch cpue and estimate total bycatch
+```{r}
+bycatch.bsb<-bycatch.cpue%>%
+  rename("state"=stusps)%>%
+  filter(common=="BLACK SEA BASS")%>%
+  left_join(total.effort[,c("year","state","nTrips.no.bsb")], by=c("year","state"))%>%
+  mutate(bycatch.est=cpue*nTrips.no.bsb,
+         species="BLACK SEA BASS")
+
+bycatch.smf<-bycatch.cpue%>%
+  rename("state"=stusps)%>%
+  filter(common=="SUMMER FLOUNDER")%>%
+  left_join(total.effort[,c("year","state","nTrips.no.smf")], by=c("year","state"))%>%
+  mutate(bycatch.est=cpue*nTrips.no.smf,
+         species="SUMMER FLOUNDER")
+
+bycatch.scup<-bycatch.cpue%>%
+  rename("state"=stusps)%>%
+  filter(common=="SCUP")%>%
+  left_join(total.effort[,c("year","state","nTrips.no.scup")], by=c("year","state"))%>%
+  mutate(bycatch.est=cpue*nTrips.no.scup,
+         species="SCUP")
+
+bycatch.est<-rbind.data.frame(bycatch.bsb[,c("year","state","species","quota (millions of pounds)","bycatch.est")], bycatch.smf[,c("year","state","species","quota (millions of pounds)","bycatch.est")], bycatch.scup[,c("year","state","species","quota (millions of pounds)","bycatch.est")])
+
+ggplot(bycatch.est)+
+  geom_line(aes(x=year, y=bycatch.est, color=species))+
+  facet_grid(state~.)+
+  scale_color_manual(values=cbbPalette)+
+     geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+   geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+   geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  ggtitle("Bycatch estimate")+
+  theme_bw()
+ggsave(here::here("figures","bycatch.estimate.png"), height=12, width=4)
+
+```
+To start, let's aggregate by year and species
+
+```{r}
+bycatch.est.agg<-bycatch.est%>%
+  group_by(species, year)%>%
+  
+```
+
+
+
+Can't test vs rhl yet, not enough years in the dataset. but hopefully other half of MRIP data will come insoon
