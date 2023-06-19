@@ -6,7 +6,7 @@ date: "2023-01-04"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, wesanderson)
+pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, wesanderson, ggpubr)
 ```
 
 MRIP raw trip data from here: https://www.st.nmfs.noaa.gov/st1/recreational/MRIP_Survey_Data/CSV/
@@ -323,9 +323,22 @@ bycatch.cpue$cpueBycatch<-bycatch.cpue$cpue
 bycatch.cpue$rhl<-bycatch.cpue$`quota (millions of pounds)`
 data.bind.total$cpueTotal<-data.bind.total$cpue
 
-all.cpue.est<-left_join(data.bind.total[,c("year","common","stusps","cpueTotal")], bycatch.cpue[,c("year","common","stusps","cpueBycatch","rhl")], 
+all.cpue.est<-left_join(data.bind.total[,c("year","common","stusps","cpueTotal")], bycatch.cpue[,c("year","common","stusps","cpueBycatch")], 
                         by=c("year","common","stusps"))
+
+# ugh, just join on RHL separately. 
+
+rhl$common<-toupper(rhl$species)
+rhl$rhl<-rhl$`quota (millions of pounds)`
+
+all.cpue.est.2<-left_join(all.cpue.est, rhl[,c("common","year","rhl")], by=c("common","year"))
+
+all.cpue.est<-all.cpue.est.2
+
 ```
+
+Problem with this join--resulting dataframe has NA values for some species and years' RHL. This is because the states and years were missing from bycatch.cpue. (because not all states and years had quantified catch)
+
 
 
 And last target cpue
@@ -779,6 +792,7 @@ ggplot(bycatch.prop)+
 ggsave(here::here("figures","prop.bycatch.vs.rhl.png"), height=12, width=6)
 
 ```
+I do see a small positive effect of RHL on summer flounder log bycatch. 
 
 ```{r}
 lm.rhl.smf<-lm(log(catchBycatch)~rhl, filter(all.cpue.effort, species=='SUMMER FLOUNDER' & !is.na(rhl)))
@@ -901,8 +915,8 @@ Divide instead by pre/post RHL?
 all.cpue.rhl.agg<-all.cpue.effort%>%
   filter(year<2020)%>%
   mutate(rhl.ind=ifelse(is.na(rhl), 0, 1),
-         rhl.ind=as.factor(rhl.ind))
-
+         rhl.ind=as.factor(rhl.ind))%>%
+  ungroup()
 ggplot(all.cpue.rhl.agg)+
   geom_boxplot(aes(x=rhl.ind, y=directedEffort))+
   facet_grid(species~.)+
@@ -955,57 +969,26 @@ ggplot(all.cpue.rhl.agg)+
 
 ```
 
+So there was no clear linear relationship between RHL and fishing effort or bycatch. I'm going to instead try a time series approach to see if introducing an RHL was an intervention that produced a permanent constant change, temporary constant change, gradual change to new mean, or initial change that gradually reverted. 
 
-Some state/year combinations have non-estimates (represented as zero) for directed effort for these species. (out of typical range, so not enough data)
+Starting with aggregate effect across all states, and potentially slicing it from there. 
 
-Problem here is that total directed catch for all 3 species combined is sometimes higher than total catch for the state. I think this makes sense; multispecies trips happen. Therefore, keep it separated by species. 
-
-
-join bycatch cpue and estimate total bycatch
-```{r}
-bycatch.bsb<-bycatch.cpue%>%
-  rename("state"=stusps)%>%
-  filter(common=="BLACK SEA BASS")%>%
-  left_join(total.effort[,c("year","state","nTrips.no.bsb")], by=c("year","state"))%>%
-  mutate(bycatch.est=cpue*nTrips.no.bsb,
-         species="BLACK SEA BASS")
-
-bycatch.smf<-bycatch.cpue%>%
-  rename("state"=stusps)%>%
-  filter(common=="SUMMER FLOUNDER")%>%
-  left_join(total.effort[,c("year","state","nTrips.no.smf")], by=c("year","state"))%>%
-  mutate(bycatch.est=cpue*nTrips.no.smf,
-         species="SUMMER FLOUNDER")
-
-bycatch.scup<-bycatch.cpue%>%
-  rename("state"=stusps)%>%
-  filter(common=="SCUP")%>%
-  left_join(total.effort[,c("year","state","nTrips.no.scup")], by=c("year","state"))%>%
-  mutate(bycatch.est=cpue*nTrips.no.scup,
-         species="SCUP")
-
-bycatch.est<-rbind.data.frame(bycatch.bsb[,c("year","state","species","quota (millions of pounds)","bycatch.est")], bycatch.smf[,c("year","state","species","quota (millions of pounds)","bycatch.est")], bycatch.scup[,c("year","state","species","quota (millions of pounds)","bycatch.est")])
-
-ggplot(bycatch.est)+
-  geom_line(aes(x=year, y=bycatch.est, color=species))+
-  facet_grid(state~.)+
-  scale_color_manual(values=cbbPalette)+
-     geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
-   geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
-   geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
-  ggtitle("Bycatch estimate")+
-  theme_bw()
-ggsave(here::here("figures","bycatch.estimate.png"), height=12, width=4)
-
-```
-To start, let's aggregate by year and species
+let's take all.cpue.effort and aggregate it
 
 ```{r}
-bycatch.est.agg<-bycatch.est%>%
-  group_by(species, year)%>%
+agg.ts.data<-all.cpue.effort%>%
+  filter(year<2020)%>%
+  group_by(year, species)%>%
+  summarize(directedEffort=sum(directedEffort, na.rm=T),
+            totalEffort=sum(nTrips, na.rm=T),
+            nonDirectedEffort=sum(nonDirectedEffort, na.rm=T),
+            catchTotal=sum(catchTotal, na.rm=T),
+            catchDirected=sum(catchDirected, na.rm=T),
+            catchBycatch=sum(catchBycatch, na.rm=T),
+            rhl=unique(rhl))%>%
+  ungroup()%>%
+  mutate(rhl.ind=ifelse(is.na(rhl), 0, 1))
   
 ```
 
 
-
-Can't test vs rhl yet, not enough years in the dataset. but hopefully other half of MRIP data will come insoon
