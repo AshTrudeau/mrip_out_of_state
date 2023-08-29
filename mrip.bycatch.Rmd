@@ -6,7 +6,7 @@ date: "2023-01-04"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, wesanderson, ggpubr)
+pacman::p_load(tidyverse, lubridate, here, RColorBrewer, gganimate, circlize, wesanderson, ggpubr, cowplot, TSA, forecast)
 ```
 
 MRIP raw trip data from here: https://www.st.nmfs.noaa.gov/st1/recreational/MRIP_Survey_Data/CSV/
@@ -588,6 +588,7 @@ all.cpue.effort<-left_join(all.cpue, directed.total, by=c("year","state","specie
   mutate(catchTotal=cpueTotal*nTrips,
          catchDirected=cpueTarget*directedEffort,
          catchBycatch=cpueBycatch*nonDirectedEffort,
+         propBycatch=catchBycatch/catchTotal,
          state=factor(state, levels=c("ME","NH","MA","RI","CT","NY","NJ","DE","MD","VA","NC")))
 
 ```
@@ -636,6 +637,8 @@ ggplot(all.cpue.effort)+
   scale_color_manual(values=cbbPalette)+
   theme_bw()
 
+write.csv(all.cpue.effort, here::here("summary output", "catch.and.effort.estimates.by.state.MRIP.csv"))
+
 # aggregate across states
 
 effort.agg<-all.cpue.effort%>%
@@ -655,6 +658,8 @@ total.effort<-ggplot(effort.agg)+
   theme_bw()+
   theme(legend.position="none")
 
+total.effort
+
 ```
 Fairly clear relationship between total effort and black sea bass RHL. (which is not reflected in directed effort! weird.)
 
@@ -668,7 +673,7 @@ directed.effort<-ggplot(effort.agg)+
   ylab("Annual directed fishing trips")+
   theme_bw()+
   theme(legend.position="none")
-
+directed.effort
 
 ```
 Weird, it's not very. Scup has the clearest relationship, bsb and smf are just blobs. 
@@ -766,6 +771,8 @@ bycatch<-ggplot(bycatch.agg)+
   ylab("Annual bycatch estimate")+
   theme_bw()+
   theme(legend.position="none")
+
+bycatch
 
 lm.species<-lm(log(catchBycatch)~rhl+species, filter(bycatch.agg, !is.na(rhl)))
 plot(lm.species)
@@ -929,6 +936,33 @@ ggplot(all.cpue.rhl.agg)+
   theme_bw()
 ggsave(here::here("figures","boxplot.bycatch.rhl.png"), height=12, width=6)
 ```
+
+
+Binning data before and after RHL
+
+```{r}
+ggplot(all.cpue.rhl.agg)+
+  geom_boxplot(aes(x=rhl.ind, y=cpueBycatch))+
+  facet_grid(species~.)+
+  theme_bw()
+
+```
+
+
+```{r}
+agg.mod<-lm(log(catchBycatch)~rhl.ind + species, data=all.cpue.rhl.agg)
+plot(agg.mod)
+
+summary(agg.mod)
+
+agg.mod.int<-lm(log(catchBycatch)~rhl.ind + species + rhl.ind*species, data=all.cpue.rhl.agg)
+plot(agg.mod.int)
+
+summary(agg.mod.int)
+
+```
+
+
 eh, no obvious change
 
 ```{r}
@@ -945,7 +979,11 @@ agg.catch<-all.cpue.effort%>%
   filter(year<2020)%>%
   group_by(year, species)%>%
   summarize(bycatch=sum(catchBycatch, na.rm=T),
-            rhl=unique(rhl))
+            catch=sum(catchTotal, na.rm=T),
+            directedEffort=sum(directedEffort, na.rm=T),
+            totalEffort=sum(nTrips, na.rm=T),
+            rhl=unique(rhl))%>%
+  ungroup()
 
 ggplot(agg.catch)+
   geom_line(aes(x=year, y=bycatch, color=species))+
@@ -956,18 +994,57 @@ ggplot(agg.catch)+
   ylab("Annual bycatch estimate")+
   theme_bw()
 ggsave(here::here("figures","aggregate.bycatch.png"), height=4, width=6)
+
+ggplot(agg.catch)+
+  geom_line(aes(x=year, y=catch, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+  geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+  geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  ylab("Annual catch estimate")+
+  theme_bw()
+ggsave(here::here("figures","aggregate.catch.png"), height=4, width=6)
+
+ggplot(agg.catch)+
+  geom_line(aes(x=year, y=totalEffort, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+  geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+  geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  ylab("Annual total effort estimate")+
+  theme_bw()
+ggsave(here::here("figures","aggregate.total.effort.png"), height=4, width=6)
+
+ggplot(agg.catch)+
+  geom_line(aes(x=year, y=directedEffort, color=species))+
+  scale_color_manual(values=cbbPalette)+
+  geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+  geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+  geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  ylab("Annual directed effort estimate")+
+  theme_bw()
+ggsave(here::here("figures","aggregate.directed.effort.png"), height=4, width=6)
+
+
 ```
-
-
-Binning data before and after RHL
+And we'll compare these to SSB
 
 ```{r}
-ggplot(all.cpue.rhl.agg)+
-  geom_boxplot(aes(x=rhl.ind, y=cpueBycatch))+
-  facet_grid(species~.)+
-  theme_bw()
+ssb<-read_csv(here::here("data","ssb.estimates.csv"))%>%
+  filter(year>1979)
 
+ggplot(ssb)+
+  geom_line(aes(x=year, y=SMF_SSB), color="#56B4E9")+
+  geom_line(aes(x=year, y=BSB_SSB), color="#000000")+
+  geom_line(aes(x=year, y=SCUP_SSB), color="#E69F00")+
+    geom_vline(xintercept=1993, color="#56B4E9", linetype="dashed")+
+  geom_vline(xintercept=1998, color="#000000", linetype="dashed")+
+  geom_vline(xintercept=1997, color="#E69F00", linetype="dashed")+
+  ylab("SSB estimate")+
+  theme_bw()
 ```
+
+Relationships between effort and SSB obscuring any effects on bycatch? 
 
 So there was no clear linear relationship between RHL and fishing effort or bycatch. I'm going to instead try a time series approach to see if introducing an RHL was an intervention that produced a permanent constant change, temporary constant change, gradual change to new mean, or initial change that gradually reverted. 
 
@@ -976,6 +1053,16 @@ Starting with aggregate effect across all states, and potentially slicing it fro
 let's take all.cpue.effort and aggregate it
 
 ```{r}
+# first, pivot SSB to join
+
+ssb.pivot<-ssb%>%
+  pivot_longer(-year)%>%
+  rename("species"=name,
+         "SSB"=value)%>%
+  mutate(species=ifelse(species=="SMF_SSB","SUMMER FLOUNDER",
+                        ifelse(species=="BSB_SSB","BLACK SEA BASS",
+                               ifelse(species=="SCUP_SSB","SCUP","error"))))
+
 agg.ts.data<-all.cpue.effort%>%
   filter(year<2020)%>%
   group_by(year, species)%>%
@@ -987,8 +1074,162 @@ agg.ts.data<-all.cpue.effort%>%
             catchBycatch=sum(catchBycatch, na.rm=T),
             rhl=unique(rhl))%>%
   ungroup()%>%
-  mutate(rhl.ind=ifelse(is.na(rhl), 0, 1))
+  mutate(rhl.ind=ifelse(is.na(rhl), 0, 1))%>%
+  left_join(ssb.pivot, by=c("year","species"))
+
+
   
 ```
+relationships between directed effort and SSB? 
 
+```{r}
+ggplot(agg.ts.data)+
+  geom_point(aes(x=SSB, y=directedEffort, color=species))
+```
+There it is. Directed effort is highly correlated with abundance. 
+
+```{r}
+effort.abundance<-lm(directedEffort~SSB + species + SSB*species, data=agg.ts.data)
+plot(effort.abundance)
+summary(effort.abundance)
+```
+
+
+```{r}
+ggplot(agg.ts.data)+
+  geom_point(aes(x=totalEffort, y=catchBycatch, color=species))
+
+ggplot(agg.ts.data)+
+  geom_point(aes(x=directedEffort, y=catchBycatch, color=species))
+
+
+# for each year, what proportion of total catch was bycatch?
+
+agg.ts.data$propBycatch<-agg.ts.data$catchBycatch/agg.ts.data$catchTotal
+
+ggplot(agg.ts.data)+
+  geom_line(aes(x=year, y=propBycatch, color=species))
+
+ggplot(agg.ts.data)+
+  geom_point(aes(x=rhl, y=propBycatch, color=species))
+```
+```{r}
+ggplot(agg.ts.data)+
+  geom_point(aes(x=SSB, y=propBycatch, color=species))
+
+```
+
+
+```{r}
+smf.rhl.ssb.mod<-lm(log(directedEffort)~rhl + SSB, data=filter(agg.ts.data, species=="SUMMER FLOUNDER"))
+plot(smf.rhl.ssb.mod)
+
+summary(smf.rhl.ssb.mod)
+```
+
+```{r}
+bsb.rhl.ssb.mod<-lm(log(directedEffort)~rhl + SSB, data=filter(agg.ts.data, species=="BLACK SEA BASS"))
+plot(bsb.rhl.ssb.mod)
+
+summary(bsb.rhl.ssb.mod)
+
+```
+```{r}
+scup.rhl.ssb.mod<-lm(log(directedEffort)~rhl + SSB, data=filter(agg.ts.data, species=="SCUP"))
+plot(scup.rhl.ssb.mod)
+
+summary(scup.rhl.ssb.mod)
+
+```
+
+
+
+```{r}
+smf.rhl.ssb.mod<-lm(log(catchBycatch)~rhl + SSB, data=filter(agg.ts.data, species=="SUMMER FLOUNDER"))
+plot(smf.rhl.ssb.mod)
+
+summary(smf.rhl.ssb.mod)
+```
+
+```{r}
+bsb.rhl.ssb.mod<-lm(log(catchBycatch)~rhl + SSB, data=filter(agg.ts.data, species=="BLACK SEA BASS"))
+plot(bsb.rhl.ssb.mod)
+
+summary(bsb.rhl.ssb.mod)
+
+```
+```{r}
+scup.rhl.ssb.mod<-lm(log(catchBycatch)~rhl + SSB, data=filter(agg.ts.data, species=="SCUP"))
+plot(scup.rhl.ssb.mod)
+
+summary(scup.rhl.ssb.mod)
+
+```
+
+
+
+
+Now, attempt intervention analysis
+
+```{r}
+library(TSA)
+library(forecast)
+
+agg.ts.smf<-filter(agg.ts.data, species=="SUMMER FLOUNDER")$
+agg.ts.bsb<-filter(agg.ts.data, species=="BLACK SEA BASS")
+agg.ts.scup<-filter(agg.ts.data, species=="SCUP")
+
+dir.ts.smf<-ts(agg.ts.smf$directedEffort, start=1981, end=2019, frequency=1)
+
+acf(dir.ts.smf)
+pacf(dir.ts.smf)
+
+arma.test<-auto.arima(dir.ts.smf)
+summary(arma.test)
+
+acf(resid(arma.test))
+pacf(resid(arma.test))
+```
+MA1 does really well with the autocorrelation
+
+
+First looking for changes in directed effort associated with implementations of RHL and associated regulations. 
+
+Add SSB and/or annual catch rates as a predictor? Can use to predict effort, but not bycatch. (circular)
+
+Following steps suggested here: https://online.stat.psu.edu/stat510/lesson/9/9.2 
+- fit ARIMA model to values up to intervention
+- forecast values after intervention
+- look at difference
+
+Let's start with the species with the most evident bycatch change. 
+```{r}
+agg.ts.bsb.pre<-filter(agg.ts.data, species=="BLACK SEA BASS" & is.na(rhl))
+agg.ts.bsb.post<-filter(agg.ts.data, species=="BLACK SEA BASS" & !is.na(rhl))
+
+bycatch.ts.bsb.pre<-ts(agg.ts.bsb.pre$catchBycatch, start=1981, end=1993, frequency=1)
+bycatch.ts.bsb.post<-ts(agg.ts.bsb.post$catchBycatch, start=1994, end=2019, frequency=1)
+
+pre.mod<-auto.arima(bycatch.ts.bsb.pre)
+summary(pre.mod)
+
+acf(bycatch.ts.bsb.post)
+pacf(bycatch.ts.bsb.post)
+
+plot(bycatch.ts.bsb.post)
+
+```
+```{r}
+mean(bycatch.ts.bsb.pre)
+
+mean(bycatch.ts.bsb.post)
+```
+Don't actually need an ARIMA model for this--no autocorrelation. 
+```{r}
+wilcox.test(bycatch.ts.bsb.pre, bycatch.ts.bsb.post, paired=F, alternative="two.sided")
+```
+
+No significant difference in bycatch before and after for scup and black sea bass. 
+
+Significant difference for SMF: lower bycatch after RHL and regs implemented
 
